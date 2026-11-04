@@ -1,8 +1,9 @@
 import { motion } from 'motion/react'
-import { Box, FileDown, LayoutTemplate, Menu as MenuIcon, PanelRightClose, PanelRightOpen, Plus, X } from 'lucide-react'
+import { Box, FileDown, FileUp, LayoutTemplate, Menu as MenuIcon, PanelRightClose, PanelRightOpen, Plus, X } from 'lucide-react'
 import { lazy, Suspense, useState } from 'react'
 
 const TemplatesDialog = lazy(() => import('./TemplatesDialog').then((m) => ({ default: m.TemplatesDialog })))
+const ImportDialog = lazy(() => import('./ImportDialog').then((m) => ({ default: m.ImportDialog })))
 import { actions } from '@/lib/actions'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/store/workspace'
@@ -18,6 +19,7 @@ export function TabBar() {
   const [editing, setEditing] = useState<string | null>(null)
   const sidebar = useWorkspace((s) => s.settings.sidebar)
   const [templates, setTemplates] = useState(false)
+  const [importing, setImporting] = useState(false)
 
   return (
     <div className="flex h-9 shrink-0 items-center gap-1 px-1.5">
@@ -93,6 +95,14 @@ export function TabBar() {
           </span>
           {job.message}
         </div>
+      )}
+      <button type="button" onClick={() => setImporting(true)} className="flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs text-dim transition-colors hover:bg-panel-2 hover:text-fg">
+        <FileUp className="size-3.5" /> Importér
+      </button>
+      {importing && (
+        <Suspense fallback={null}>
+          <ImportDialog onClose={() => setImporting(false)} />
+        </Suspense>
       )}
       <button type="button" onClick={() => setTemplates(true)} className="flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs text-dim transition-colors hover:bg-panel-2 hover:text-fg">
         <LayoutTemplate className="size-3.5" /> Templates

@@ -2,7 +2,7 @@ import { Magnet, Spline, Box, BrickWall, DoorOpen, Footprints, Maximize2, MouseP
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { actions } from '@/lib/actions'
-import { OPENING_DEFAULTS, type OpeningKind } from '@/plan/types'
+import { DRAWN_KINDS, OPENING_DEFAULTS, type OpeningKind } from '@/plan/types'
 import { newLevel, useActiveProject, useWorkspace, type PlanTool, type View } from '@/store/workspace'
 import { viewport } from '@/viewport/bridge'
 import { Tooltip } from '@/ui/primitives'
@@ -25,7 +25,7 @@ const TOOLS: { id: PlanTool; label: string; key: string; icon: ReactNode }[] = [
 ]
 
 const DOORS: OpeningKind[] = ['door', 'double-door', 'sliding-door', 'archway']
-const WINDOWS: OpeningKind[] = ['window', 'wide-window', 'french-window']
+const WINDOWS: OpeningKind[] = ['window', 'floor-window', 'french-window']
 
 function Seg({ active, onClick, children, label }: { active?: boolean; onClick: () => void; children: ReactNode; label?: string }) {
   return (
@@ -104,6 +104,7 @@ export function PlanToolbar() {
               {OPENING_DEFAULTS[k].label}
             </Seg>
           ))}
+          <span className="ml-1 whitespace-nowrap text-2xs text-faint">{DRAWN_KINDS.includes(kind) ? 'Drag along a wall (or click, then click the other end)' : 'Click on a wall'}</span>
         </div>
       )}
       {tool === 'arc' && <span className="text-2xs text-faint">Click a corner, then another corner, then pull the curve out and click. Two walls round a corner into one curve. Shift: free.</span>}

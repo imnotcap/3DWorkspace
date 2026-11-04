@@ -44,7 +44,7 @@ export interface Wall {
   centre?: Vec2
 }
 
-export type OpeningKind = 'door' | 'double-door' | 'sliding-door' | 'window' | 'wide-window' | 'french-window' | 'archway'
+export type OpeningKind = 'door' | 'double-door' | 'sliding-door' | 'window' | 'wide-window' | 'floor-window' | 'french-window' | 'archway'
 
 export interface Opening {
   id: string
@@ -98,8 +98,12 @@ export const OPENING_DEFAULTS: Record<OpeningKind, { label: string; width: numbe
   archway: { label: 'Opening', width: 1.0, height: 2.1, sill: 0, door: true },
   window: { label: 'Window', width: 1.0, height: 1.3, sill: 0.9, door: false },
   'wide-window': { label: 'Wide window', width: 2.0, height: 1.4, sill: 0.8, door: false },
+  'floor-window': { label: 'Floor window', width: 1.6, height: 2.2, sill: 0, door: false },
   'french-window': { label: 'French window', width: 1.4, height: 2.2, sill: 0, door: false },
 }
+
+/** Openings you draw by dragging along a wall (their width is up to you); the rest are placed with one click. */
+export const DRAWN_KINDS: OpeningKind[] = ['window', 'wide-window', 'floor-window', 'sliding-door', 'archway']
 
 export const DEFAULT_WALL_FINISH: Finish = { color: '#f2efe9' }
 export const DEFAULT_FLOOR_FINISH: Finish = { color: '#c8a27a', preset: 'oak-floor' }

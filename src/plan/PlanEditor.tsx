@@ -8,7 +8,7 @@ import { moveEndpoints, moveWall, nearestWall, rectWalls, roundBetween, same, sn
 import { catalogItemOf, footprint, objectSize } from './footprint'
 import { add, analyse, clampOpening, dist, dot, mul, norm, perp, projectOnWall, sub, wallFrame, wallLength, wallPolyline } from './geometry'
 import { tourPath, tourPose } from './tour'
-import { OPENING_DEFAULTS, type Opening, type Vec2 } from './types'
+import { DRAWN_KINDS, OPENING_DEFAULTS, type Opening, type Vec2, type Wall } from './types'
 import { placeItem } from './place'
 
 interface ViewXf {
@@ -28,6 +28,8 @@ type Drag =
   | { kind: 'room-rect'; start: Vec2 }
   /** Bending a wall by its middle handle. */
   | { kind: 'bend'; id: string }
+  /** Drawing a window / sliding door along a wall: from `s0` (m along the wall) to the pointer. */
+  | { kind: 'draw-opening'; wallId: string; s0: number; side: 'left' | 'right'; moved: boolean }
   /** Resizing an opening by one end; the other end (`fixed`, metres along the wall) stays put. */
   | { kind: 'opening-end'; id: string; fixed: number }
   /** Resizing a piece by one side; the opposite side stays put. Size and placement at the start. */
@@ -65,6 +67,8 @@ export function PlanEditor() {
   const [cursor, setCursor] = useState<{ p: Vec2; guideX?: number; guideY?: number; shift?: boolean } | null>(null)
   const [chain, setChain] = useState<Vec2[]>([])
   const [rectStart, setRectStart] = useState<Vec2 | null>(null)
+  /** A window being drawn by click, move, click (instead of press, drag, release). */
+  const [pendingOpening, setPendingOpening] = useState<{ wallId: string; s0: number; side: 'left' | 'right' } | null>(null)
   /** Curve tool: the two corners picked so far (then the pointer sets how far it bows). */
   const [arc, setArc] = useState<{ a: Vec2; c?: Vec2 } | null>(null)
   const [placeYaw, setPlaceYaw] = useState(0)
@@ -103,6 +107,24 @@ export function PlanEditor() {
     viewport.fitPlan = fit
   })
 
+  /** The span a window drawn from `s0` to `s1` covers on wall `w` (snapped, at least 30 cm, inside the wall). */
+  const drawnSpan = (w: Wall, s0: number, s1: number, free: boolean) => {
+    const L = wallLength(w)
+    let e = Math.max(0.05, Math.min(L - 0.05, free ? s1 : Math.round(s1 / grid) * grid))
+    if (Math.abs(e - s0) < 0.3) e = s0 + (e >= s0 ? 0.3 : -0.3)
+    const a = Math.max(0.05, Math.min(s0, e))
+    const b = Math.min(L - 0.05, Math.max(s0, e))
+    return { a, b, width: b - a, t: (a + b) / 2 }
+  }
+  const addDrawnOpening = (w: Wall, s0: number, s1: number, side: 'left' | 'right', free: boolean) => {
+    const { width, t } = drawnSpan(w, s0, s1, free)
+    if (width < 0.3) return
+    const def = OPENING_DEFAULTS[openingKind]
+    const o: Opening = { id: uid(), wallId: w.id, kind: openingKind, t, width, height: def.height, sill: def.sill, hinge: 'a', side, open: 0, frame: { color: '#f4f2ee' } }
+    ws().editPlan(`Add ${def.label.toLowerCase()}`, (pl) => ({ ...pl, openings: [...pl.openings, o] }))
+    ws().selectPlan({ kind: 'opening', id: o.id })
+  }
+
   const toPlan = (e: { clientX: number; clientY: number }): Vec2 => {
     const r = svg.current!.getBoundingClientRect()
     return [(e.clientX - r.left - xf.ox) / xf.scale, (e.clientY - r.top - xf.oy) / xf.scale]
@@ -126,10 +148,11 @@ export function PlanEditor() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return
-      if (e.key === 'Escape' && (chain.length || rectStart || placing || arc)) {
+      if (e.key === 'Escape' && (chain.length || rectStart || placing || arc || pendingOpening)) {
         e.stopPropagation()
         setChain([])
         setArc(null)
+        setPendingOpening(null)
         setRectStart(null)
         ws().setPlacing(null)
       }
@@ -142,7 +165,8 @@ export function PlanEditor() {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [chain.length, rectStart, placing, arc, ws])
+  }, [chain.length, rectStart, placing, arc, pendingOpening, ws])
+  useEffect(() => setPendingOpening(null), [tool, openingKind])
 
   // ───────── pointer ─────────
   const onPointerDown = (e: RPointerEvent<SVGSVGElement>) => {
@@ -191,6 +215,21 @@ export function PlanEditor() {
     if (tool === 'room') {
       drag.current = { kind: 'room-rect', start: snapPoint(p, snapOpts()).p }
       setRectStart(snapPoint(p, snapOpts()).p)
+      return
+    }
+    if ((tool === 'door' || tool === 'window') && DRAWN_KINDS.includes(openingKind)) {
+      // Second click of click–move–click: finish the pending one.
+      if (pendingOpening) {
+        const w = walls.find((x) => x.id === pendingOpening.wallId)
+        if (w) addDrawnOpening(w, pendingOpening.s0, projectOnWall(p, w).s, pendingOpening.side, e.shiftKey)
+        setPendingOpening(null)
+        return
+      }
+      const hit = nearestWall(p, walls, 0.6)
+      if (!hit) return
+      const s0 = Math.max(0.05, Math.min(hit.len - 0.05, e.shiftKey ? hit.t : Math.round(hit.t / grid) * grid))
+      drag.current = { kind: 'draw-opening', wallId: hit.wall.id, s0, side: hit.side, moved: false }
+      setCursor({ p })
       return
     }
     if (tool === 'door' || tool === 'window') {
@@ -329,6 +368,12 @@ export function PlanEditor() {
       s.editPlan(null, (pl) => ({ ...pl, openings: pl.openings.map((x) => (x.id === o.id ? { ...x, t } : x)) }))
       return
     }
+    if (d.kind === 'draw-opening') {
+      const w = walls.find((x) => x.id === d.wallId)
+      if (w && Math.abs(projectOnWall(p, w).s - d.s0) * xf.scale > 6) drag.current = { ...d, moved: true }
+      setCursor({ p, shift: e.shiftKey })
+      return
+    }
     if (d.kind === 'bend') {
       const w = project.walls.find((x) => x.id === d.id)
       if (!w) return
@@ -417,6 +462,14 @@ export function PlanEditor() {
     const d = drag.current
     drag.current = null
     setSizeLabel(null)
+    if (d?.kind === 'draw-opening') {
+      const w = walls.find((x) => x.id === d.wallId)
+      if (!w) return
+      // Pressed and released in place: the next click sets the other end.
+      if (!d.moved) return setPendingOpening({ wallId: d.wallId, s0: d.s0, side: d.side })
+      addDrawnOpening(w, d.s0, projectOnWall(toPlan(e), w).s, d.side, e.shiftKey)
+      return
+    }
     if (d?.kind === 'room-rect') {
       const end = snapPoint(toPlan(e), snapOpts()).p
       const made = rectWalls(d.start, end, thickness, level.id, project.walls, uid)
@@ -468,8 +521,26 @@ export function PlanEditor() {
   const path = useMemo(() => (showTour ? tourPath(project) : null), [showTour, project])
   const cam = useMemo(() => (path && path.length > 0 && project.tour.points.length > 1 ? tourPose(project, frame - project.animation.start, project.animation.fps, path) : null), [path, project, frame])
 
+  // Window being drawn: the stretch of wall it will take, in blue, with its width.
+  const drawing = (() => {
+    if ((tool !== 'door' && tool !== 'window') || !cursor) return null
+    const d = drag.current
+    const src = d?.kind === 'draw-opening' ? d : pendingOpening
+    if (!src) return null
+    const w = walls.find((x) => x.id === src.wallId)
+    if (!w) return null
+    const span = drawnSpan(w, src.s0, projectOnWall(cursor.p, w).s, !!cursor.shift)
+    return { line: wallPolyline(w, span.a, span.b), w: w.thickness + 0.06, at: wallFrame(w, span.t).p, label: formatLength(span.width) }
+  })()
   const doorPreview = (() => {
-    if ((tool !== 'door' && tool !== 'window') || !cursor || drag.current) return null
+    if ((tool !== 'door' && tool !== 'window') || !cursor || drag.current || drawing) return null
+    if (DRAWN_KINDS.includes(openingKind)) {
+      // Before drawing: a short marker where the window would start.
+      const hit = nearestWall(cursor.p, walls, 0.6)
+      if (!hit) return null
+      const s = Math.max(0.05, Math.min(hit.len - 0.05, Math.round(hit.t / grid) * grid))
+      return { line: wallPolyline(hit.wall, Math.max(0, s - 0.02), Math.min(hit.len, s + 0.02)), w: hit.wall.thickness + 0.1, label: '' }
+    }
     const hit = nearestWall(cursor.p, walls, 0.6)
     if (!hit) return null
     const def = OPENING_DEFAULTS[openingKind]
@@ -509,6 +580,7 @@ export function PlanEditor() {
         </defs>
         <rect width="100%" height="100%" fill="url(#major)" />
         <g transform={`translate(${xf.ox} ${xf.oy}) scale(${xf.scale})`}>
+          {project.underlay && levelIndex === 0 && <image href={project.underlay.url} x={project.underlay.x} y={project.underlay.y} width={project.underlay.w} height={project.underlay.h} opacity={project.underlay.opacity} preserveAspectRatio="none" pointerEvents="none" />}
           {nodes.map((n, i) => render(n, i))}
 
           {/* Selected wall: drag its ends. */}
@@ -685,6 +757,14 @@ export function PlanEditor() {
               <rect x={Math.min(rectStart[0], cursor.p[0])} y={Math.min(rectStart[1], cursor.p[1])} width={Math.abs(cursor.p[0] - rectStart[0])} height={Math.abs(cursor.p[1] - rectStart[1])} fill="#4c8dff22" stroke="#4c8dff" strokeWidth={thickness} strokeOpacity={0.6} />
               <text x={(rectStart[0] + cursor.p[0]) / 2} y={(rectStart[1] + cursor.p[1]) / 2} fontSize={px(12)} fill="#fff" textAnchor="middle">
                 {`${formatLength(Math.abs(cursor.p[0] - rectStart[0]))} × ${formatLength(Math.abs(cursor.p[1] - rectStart[1]))}`}
+              </text>
+            </g>
+          )}
+          {drawing && (
+            <g pointerEvents="none">
+              <polyline points={drawing.line.map((q) => q.join(',')).join(' ')} fill="none" stroke="#4c8dff" strokeWidth={drawing.w} strokeOpacity={0.85} />
+              <text x={drawing.at[0]} y={drawing.at[1] - px(14)} fontSize={px(12)} fill="#ffffff" textAnchor="middle" stroke="#141414" strokeWidth={px(3)} paintOrder="stroke">
+                {drawing.label}
               </text>
             </g>
           )}
