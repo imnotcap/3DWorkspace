@@ -1,12 +1,12 @@
 // Renders one test wall with every panel style: a window with a radiator under it, a door, and the
 // sockets and switches the auto-placer puts there (scripts/render-panels.mjs).
-import { AmbientLight, Color, DirectionalLight, HemisphereLight, PerspectiveCamera, Scene, WebGLRenderer, ACESFilmicToneMapping, SRGBColorSpace } from 'three'
+import { AmbientLight, Color, DirectionalLight, HemisphereLight, PerspectiveCamera, PointLight, Scene, WebGLRenderer, ACESFilmicToneMapping, SRGBColorSpace } from 'three'
 import { buildLevel } from '../../src/plan/build.ts'
 import { electricalFor } from '../../src/plan/electrical.ts'
 import { analyse } from '../../src/plan/geometry.ts'
 import { buildFurniture } from '../../src/furniture/build.ts'
 import { footprint } from '../../src/plan/footprint.ts'
-import type { Level, Opening, PanelStyle, RoomInfo, SkirtStyle, Wall } from '../../src/plan/types.ts'
+import type { CeilingBeams, Finish, Level, Opening, PanelStyle, RoomInfo, SkirtStyle, Wall } from '../../src/plan/types.ts'
 import type { SceneObject } from '../../src/store/workspace.ts'
 
 const level: Level = { id: 'L', name: 'Test', elevation: 0, height: 2.6, slab: 0.25 }
@@ -63,6 +63,37 @@ export async function render(styles: { panels: PanelStyle; skirting: SkirtStyle;
     renderer.render(scene, cam)
     out.push(renderer.domElement.toDataURL('image/jpeg', 0.9))
     if (st === styles[0]) out.push(JSON.stringify(sockets.map((s) => ({ item: s.furniture!.item, x: +s.transform.position[0].toFixed(3), y: +(s.transform.position[1] + s.furniture!.size[1] / 2).toFixed(3), z: +s.transform.position[2].toFixed(3) }))))
+  }
+  renderer.dispose()
+  return out
+}
+
+/** The same room seen from below: one ceiling finish (and beams) per image. */
+export async function renderCeilings(list: { ceiling: Finish; beams?: CeilingBeams }[], w = 960, h = 560) {
+  const renderer = new WebGLRenderer({ antialias: true, preserveDrawingBuffer: true })
+  renderer.setSize(w, h)
+  renderer.outputColorSpace = SRGBColorSpace
+  renderer.toneMapping = ACESFilmicToneMapping
+  const out: string[] = []
+  for (const it of list) {
+    const room: RoomInfo = { id: 'room', levelId: 'L', anchor: [2.5, 1.75], name: 'Living room', floor: { color: '#c8a27a', preset: 'wf-massiv-eg' }, walls: { color: '#f2efe9' }, ceiling: it.ceiling, beams: it.beams }
+    const scene = new Scene()
+    scene.background = new Color('#d8dde3')
+    const built = buildLevel({ level, levelIndex: 0, walls, openings, rooms: [room] })
+    scene.add(built.group)
+    scene.add(new HemisphereLight('#ffffff', '#c8b8a0', 1.3))
+    scene.add(new AmbientLight('#ffffff', 0.25))
+    const lamp = new PointLight('#fff2e0', 6, 0, 1.6)
+    lamp.position.set(2.5, 1.2, 1.2)
+    scene.add(lamp)
+    const sun = new DirectionalLight('#fff4e6', 1.4)
+    sun.position.set(-3, -1, 4)
+    scene.add(sun)
+    const cam = new PerspectiveCamera(60, w / h, 0.05, 50)
+    cam.position.set(2.5, 1.3, 3.25)
+    cam.lookAt(2.5, 2.6, 0.6)
+    renderer.render(scene, cam)
+    out.push(renderer.domElement.toDataURL('image/jpeg', 0.9))
   }
   renderer.dispose()
   return out

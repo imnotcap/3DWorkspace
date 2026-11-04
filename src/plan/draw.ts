@@ -43,7 +43,7 @@ export const DARK_THEME: PlanTheme = {
   ghost: '#3a3a3a',
   selected: '#4c8dff',
   floorAlpha: 0.16,
-  font: 'Inter, system-ui, sans-serif',
+  font: "'Inter Variable', Inter, system-ui, sans-serif",
 }
 
 export const PAPER_THEME: PlanTheme = {

@@ -1,5 +1,6 @@
 import { BufferAttribute, BufferGeometry, CanvasTexture, Color, MathUtils, MeshPhysicalMaterial, MeshStandardMaterial, RepeatWrapping, SRGBColorSpace, Vector2, type InterleavedBufferAttribute, type Material, type Texture } from 'three'
 import { detailTexture } from './detailTextures'
+import { ceilingTextures } from './ceilingTextures'
 import { floorCanvases, loadWood, woodReady } from './floorTextures'
 import { presetById } from './materialPresets'
 import { pbrSet } from './pbrTextures'
@@ -153,6 +154,23 @@ export function surfaceFor(original: Material, o: MaterialOverride | null, opts:
   }
   // Metric UVs (Claude parts): one repeat per `tile` metres. Other meshes: one repeat per UV unit.
   const repeat = (tile: number) => (opts.metric ? 1 / tile : 1)
+  if (preset?.ceiling) {
+    // Ceiling boards: drawn at real size, joints and perforation as relief. Repeats are metric.
+    const t = ceilingTextures(preset.id, preset.ceiling)
+    const at = (x: Texture) => {
+      const c = x.clone()
+      c.repeat.set(opts.metric ? 1 / preset.ceiling!.tile[0] : 1, opts.metric ? 1 / preset.ceiling!.tile[1] : 1)
+      return c
+    }
+    m.map = at(t.map)
+    m.normalMap = at(t.normal)
+    m.normalScale = new Vector2(0.8, 0.8)
+    // The drawn boards are neutral: the colour (the preset's own, or the one picked) gives the tone.
+    tintTexture(m, o.color, '')
+    m.needsUpdate = true
+    m.userData.override = true
+    return m
+  }
   if (preset?.floor) {
     // Wood floors: every board cut from a photographed wood (fetched at build time), with its
     // joints and grain as relief. Until the photos have loaded, drawn grain stands in.

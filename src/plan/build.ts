@@ -22,7 +22,7 @@ import { analyse, clampOpening, interiorPoint, pointInPolygon, wallIdOf, type Pl
 import { roomFor } from './levels'
 import { trimGeometry } from './trim'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, DEFAULT_TRIM, DEFAULT_WALL_FINISH, EXTERIOR_FINISH, OPENING_DEFAULTS, type Finish, type Level, type Opening, type RoomInfo, type Vec2, type Wall } from './types'
+import { DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, DEFAULT_TRIM, DEFAULT_WALL_FINISH, EXTERIOR_FINISH, OPENING_DEFAULTS, type CeilingBeams, type Finish, type Level, type Opening, type RoomInfo, type Vec2, type Wall } from './types'
 
 /**
  * Plan → 3D. Walls are built face by face so every stretch of wall surface knows which room
@@ -203,6 +203,49 @@ export interface LevelBuildInput {
   onUpgrade?: () => void
 }
 
+/**
+ * Exposed beams under the ceiling: parallel to one side of the room's bounding box, spaced evenly
+ * from its middle, each cut to the room outline (any shape) at its centre line.
+ */
+export function beamGeometry(poly: Vec2[], ceiling: number, b: CeilingBeams): BufferGeometry | null {
+  const xs = poly.map((p) => p[0])
+  const ys = poly.map((p) => p[1])
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]
+  // Beams run across the short side: they are spaced along the long one.
+  const alongX = x1 - x0 >= y1 - y0 === b.across
+  const [a0, a1] = alongX ? [x0, x1] : [y0, y1]
+  const n = Math.max(1, Math.floor((a1 - a0 - b.width) / b.spacing))
+  const first = (a0 + a1) / 2 - ((n - 1) * b.spacing) / 2
+  const geos: BufferGeometry[] = []
+  for (let i = 0; i < n; i++) {
+    const a = first + i * b.spacing
+    // Where the line at `a` crosses the outline: the inside stretches.
+    const cuts: number[] = []
+    for (let k = 0; k < poly.length; k++) {
+      const p = poly[k]
+      const q = poly[(k + 1) % poly.length]
+      const pa = alongX ? p[0] : p[1]
+      const qa = alongX ? q[0] : q[1]
+      if ((pa <= a) === (qa <= a)) continue
+      const t = (a - pa) / (qa - pa)
+      cuts.push(alongX ? p[1] + (q[1] - p[1]) * t : p[0] + (q[0] - p[0]) * t)
+    }
+    cuts.sort((u, v) => u - v)
+    for (let k = 0; k + 1 < cuts.length; k += 2) {
+      const L = cuts[k + 1] - cuts[k]
+      if (L < 0.2) continue
+      const mid = (cuts[k] + cuts[k + 1]) / 2
+      const g = new BoxGeometry(alongX ? b.width : L, b.depth, alongX ? L : b.width)
+      g.translate(alongX ? a : mid, ceiling - b.depth / 2 - 0.001, alongX ? mid : a)
+      geos.push(g)
+    }
+  }
+  if (!geos.length) return null
+  const merged = mergeGeometries(geos)
+  geos.forEach((g) => g.dispose())
+  return merged
+}
+
 /** An opening as the panelling sees it: with the door casing (7 cm) or the window board around it. */
 export function trimHole(o: Opening) {
   const c = OPENING_DEFAULTS[o.kind].door ? 0.07 : o.sill > 0.05 ? 0.03 : 0
@@ -373,10 +416,30 @@ export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGe
     }
     const cb = new Builder()
     cb.polygon(f.polygon, level.height, false, ch)
-    const ceil = mesh(cb.geometry(), finishMaterial(info?.ceiling ?? DEFAULT_CEILING_FINISH, 'ceiling', onUpgrade), 'ceiling', pick)
+    const ceilFinish = info?.ceiling ?? DEFAULT_CEILING_FINISH
+    const cgeo = cb.geometry()
+    // Ceiling boards are laid out from the middle of the room: equal cut boards at both walls.
+    const spec = presetById(ceilFinish.preset)?.ceiling
+    if (spec) {
+      const xs = f.inner.map((p) => p[0])
+      const ys = f.inner.map((p) => p[1])
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2
+      const cy = (Math.min(...ys) + Math.max(...ys)) / 2
+      const uv = cgeo.attributes.uv
+      for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) - cx + spec.tile[0] / 2, uv.getY(k) - cy + spec.tile[1] / 2)
+    }
+    const ceil = mesh(cgeo, finishMaterial(ceilFinish, 'ceiling', onUpgrade), 'ceiling', pick)
     ceil.userData.ceiling = true
     ceil.castShadow = false
     group.add(ceil)
+    if (info?.beams) {
+      const bg = beamGeometry(f.inner, level.height, info.beams)
+      if (bg) {
+        const bm = mesh(bg, finishMaterial({ color: info.beams.color }, 'frame', onUpgrade), 'ceiling beams', pick)
+        bm.userData.ceiling = true
+        group.add(bm)
+      }
+    }
   })
 
   return { group, geom }

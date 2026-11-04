@@ -389,9 +389,11 @@ function SceneContent() {
   const invalidate = useThree((s) => s.invalidate)
   const [target, setTarget] = useState<Object3D | null>(null)
   const cameraView = useWorkspace((s) => s.cameraView)
-  // Looking through the tour camera: inside the house, so ceilings and every floor are on.
+  // Looking through the tour camera: inside the house, so every floor is on.
   const walking = cameraView && tourActive(project)
-  const showCeilings = useWorkspace((s) => s.settings.showCeilings) || walking
+  const ceilingSetting = useWorkspace((s) => s.settings.showCeilings)
+  // While walking, the tour's own choice (ceilings on unless turned off for the tour and video).
+  const showCeilings = walking ? project.tour.ceilings !== false : ceilingSetting
   const showUpper = useWorkspace((s) => s.settings.showUpperLevels) || walking
   const elevations = useMemo(() => levelElevations(project.levels), [project.levels])
   const activeIndex = Math.max(0, project.levels.findIndex((l) => l.id === project.activeLevelId))

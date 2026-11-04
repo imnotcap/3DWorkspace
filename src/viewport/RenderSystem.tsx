@@ -182,7 +182,7 @@ export function RenderBridge() {
         width: st.settings.renderWidth,
         height: st.settings.renderHeight,
         transparent: st.settings.transparent,
-        ceilings: walk || st.settings.showCeilings,
+        ceilings: walk ? p.tour.ceilings !== false : st.settings.showCeilings,
         maxLevel: walk || st.settings.showUpperLevels ? null : idx,
       }
     }

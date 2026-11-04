@@ -56,6 +56,10 @@ const hexLin = (hex: string) => [1, 3, 5].map((i) => lin(parseInt(hex.slice(i, i
 /** A flat piece of the material's colour map (about 1.2 m of it): photographed, or the drawn one. */
 async function flatSample(preset: MaterialPreset): Promise<string | null> {
   if (preset.floor) return (await import('@/viewport/thumbnails')).materialThumb(preset.id, 'tile')
+  if (preset.ceiling) {
+    // Drawn neutral and tinted to the preset's own colour in 3D: the same here.
+    return (await import('@/viewport/ceilingTextures')).ceilingPreview(preset.ceiling, 384)
+  }
   const set = await (await import('@/viewport/pbrTextures')).pbrSet(preset.id).catch(() => null)
   let img = set?.map?.image as CanvasImageSource & { width: number; height: number } | undefined
   let part = set ? Math.min(1, 1.2 / set.tile) : 1
@@ -101,7 +105,7 @@ export function FinishPreview({ presetId, color }: { presetId: string; color: st
     if (!preset) return
     let live = true
     void flatSample(preset)
-      .then((u) => (u ? tinted(u, color, preset.color) : null))
+      .then((u) => (u ? tinted(u, color, preset.ceiling ? '' : preset.color) : null))
       .then((u) => live && setUrl(u))
       .catch(() => {})
     return () => void (live = false)

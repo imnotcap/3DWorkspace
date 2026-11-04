@@ -1,17 +1,55 @@
 // Walkthrough tours: a smooth path through the rooms, and the camera pose at any frame.
 import type { CameraPose, Project } from '@/store/workspace'
-import { analyse, add, dist, mul, pieceAt, pointInPolygon, type Face } from './geometry'
+import { analyse, add, dist, distanceToPolygon, mul, norm, pieceAt, pointInPolygon, sub, type Face } from './geometry'
 import { levelElevations } from './levels'
-import { OPENING_DEFAULTS, type Tour, type TourPoint, type Vec2 } from './types'
+import { OPENING_DEFAULTS, type TourPoint, type Vec2 } from './types'
 
 type P3 = [number, number, number]
 
-/** Centripetal Catmull–Rom through the tour points, sampled into a polyline with arc lengths. */
-export function tourPath(project: Pick<Project, 'tour' | 'levels'>) {
+/** A sample along the walk: arc length, where the camera looks (unit, plan x/z) and when it is there. */
+interface Sample {
+  s: number
+  hx: number
+  hz: number
+  t: number
+}
+
+export interface TourPath {
+  line: P3[]
+  cum: number[]
+  length: number
+  samples: Sample[]
+  /** Seconds for the whole walk. */
+  duration: number
+}
+
+/** Steadicam limits: how fast the view may turn, and how gently the walk speeds up and slows down. */
+const TURN_RATE = (40 * Math.PI) / 180
+const ACCEL = 0.5
+const STEP = 0.04
+
+const cache = new WeakMap<object, { levels: unknown; path: TourPath }>()
+
+/**
+ * The walk: a centripetal Catmull–Rom through the tour points (hairpins turned into small loops,
+ * so it never doubles back on itself), with the view direction and the timing along it. The
+ * camera looks a little ahead along the path, never more than 55° off the way it moves, and
+ * slows down in turns so it never swings round faster than a person turning their head.
+ */
+export function tourPath(project: Pick<Project, 'tour' | 'levels'>): TourPath {
+  const hit = cache.get(project.tour)
+  if (hit && hit.levels === project.levels) return hit.path
+  const path = buildPath(project)
+  cache.set(project.tour, { levels: project.levels, path })
+  return path
+}
+
+function buildPath(project: Pick<Project, 'tour' | 'levels'>): TourPath {
   const elev = levelElevations(project.levels)
-  const pts: P3[] = project.tour.points.map((p) => [p.p[0], (elev.get(p.levelId) ?? 0) + project.tour.eyeHeight, p.p[1]])
+  const raw: P3[] = project.tour.points.map((p) => [p.p[0], (elev.get(p.levelId) ?? 0) + project.tour.eyeHeight, p.p[1]])
+  const pts = withoutHairpins(raw)
   const line: P3[] = []
-  if (pts.length < 2) return { line: pts, cum: pts.map(() => 0), length: 0 }
+  if (pts.length < 2) return { line: pts, cum: pts.map(() => 0), length: 0, samples: [], duration: 0 }
   const P = [pts[0], ...pts, pts[pts.length - 1]]
   for (let i = 1; i + 2 < P.length; i++) {
     const [p0, p1, p2, p3] = [P[i - 1], P[i], P[i + 1], P[i + 2]]
@@ -21,7 +59,152 @@ export function tourPath(project: Pick<Project, 'tour' | 'levels'>) {
   line.push(pts[pts.length - 1])
   const cum = [0]
   for (let i = 1; i < line.length; i++) cum.push(cum[i - 1] + dist3(line[i - 1], line[i]))
-  return { line, cum, length: cum[cum.length - 1] }
+  const base = { line, cum, length: cum[cum.length - 1] }
+
+  // Direction of travel every few cm.
+  const n = Math.max(2, Math.ceil(base.length / STEP) + 1)
+  const ds = base.length / (n - 1)
+  const tan: [number, number][] = []
+  for (let i = 0; i < n; i++) {
+    const s = i * ds
+    const a = at(base, Math.max(0, s - 0.03))
+    const b = at(base, Math.min(base.length, s + 0.03))
+    const l = Math.hypot(b[0] - a[0], b[2] - a[2]) || 1
+    tan.push([(b[0] - a[0]) / l, (b[2] - a[2]) / l])
+  }
+  // View: the travel direction averaged a little ahead (a person looks where they are going).
+  const look: [number, number][] = []
+  const back = Math.round(0.3 / ds)
+  const ahead = Math.round(1.4 / ds)
+  for (let i = 0; i < n; i++) {
+    let x = 0
+    let z = 0
+    for (let j = Math.max(0, i - back); j <= Math.min(n - 1, i + ahead); j++) {
+      const d = (j - i) * ds
+      const w = Math.exp(-((d - 0.35) ** 2) / 0.35)
+      x += tan[j][0] * w
+      z += tan[j][1] * w
+    }
+    const l = Math.hypot(x, z) || 1
+    look.push([x / l, z / l])
+  }
+  // Once more, evenly both ways: turns start and end softly.
+  const heading: [number, number][] = []
+  const soft = Math.round(0.5 / ds)
+  for (let i = 0; i < n; i++) {
+    let x = 0
+    let z = 0
+    for (let j = Math.max(0, i - soft); j <= Math.min(n - 1, i + soft); j++) {
+      const w = Math.exp(-(((j - i) * ds) ** 2) / 0.08)
+      x += look[j][0] * w
+      z += look[j][1] * w
+    }
+    const l = Math.hypot(x, z) || 1
+    x /= l
+    z /= l
+    // Never more than 55° off the way it moves.
+    const [tx, tz] = tan[i]
+    const c = x * tx + z * tz
+    const lim = Math.cos((55 * Math.PI) / 180)
+    if (c < lim) {
+      const side = Math.sign(tx * z - tz * x) || 1
+      const a = Math.atan2(tz, tx) + side * Math.acos(lim)
+      x = Math.cos(a)
+      z = Math.sin(a)
+    }
+    heading.push([x, z])
+  }
+  // Speed: slower where the view turns, gentle start and stop.
+  const v = project.tour.speed
+  const turn: number[] = heading.map((h, i) => {
+    if (i === 0) return 0
+    const [px, pz] = heading[i - 1]
+    return Math.abs(Math.atan2(px * h[1] - pz * h[0], px * h[0] + pz * h[1])) / ds
+  })
+  const win = Math.round(0.4 / ds)
+  const vmax = turn.map((_, i) => {
+    let k = 0
+    for (let j = Math.max(0, i - win); j <= Math.min(n - 1, i + win); j++) k = Math.max(k, turn[j])
+    return Math.min(v, TURN_RATE / Math.max(1e-6, k))
+  })
+  const sp = vmax.slice()
+  sp[0] = 0
+  sp[n - 1] = 0
+  for (let i = 1; i < n; i++) sp[i] = Math.min(sp[i], Math.sqrt(sp[i - 1] ** 2 + 2 * ACCEL * ds))
+  for (let i = n - 2; i >= 0; i--) sp[i] = Math.min(sp[i], Math.sqrt(sp[i + 1] ** 2 + 2 * ACCEL * ds))
+  const samples: Sample[] = [{ s: 0, hx: heading[0][0], hz: heading[0][1], t: 0 }]
+  for (let i = 1; i < n; i++) {
+    const vv = Math.max(0.02, (sp[i - 1] + sp[i]) / 2)
+    samples.push({ s: i * ds, hx: heading[i][0], hz: heading[i][1], t: samples[i - 1].t + ds / vv })
+  }
+  // Finally smooth the view in time (≈ 0.2 s), like a steadicam: the turn rate itself changes gently.
+  const ang: number[] = []
+  for (let i = 0; i < n; i++) {
+    const a = Math.atan2(samples[i].hz, samples[i].hx)
+    if (!i) ang.push(a)
+    else {
+      let d = a - (ang[i - 1] % (2 * Math.PI))
+      while (d > Math.PI) d -= 2 * Math.PI
+      while (d < -Math.PI) d += 2 * Math.PI
+      ang.push(ang[i - 1] + d)
+    }
+  }
+  let j0 = 0
+  for (let i = 0; i < n; i++) {
+    const ti = samples[i].t
+    while (samples[j0].t < ti - 0.6) j0++
+    let sum = 0
+    let wsum = 0
+    for (let j = j0; j < n && samples[j].t <= ti + 0.6; j++) {
+      const dt = (j + 1 < n ? samples[j + 1].t : samples[j].t) - (j > 0 ? samples[j - 1].t : samples[j].t)
+      const w = Math.exp(-((samples[j].t - ti) ** 2) / (2 * 0.2 ** 2)) * Math.max(1e-4, dt)
+      sum += ang[j] * w
+      wsum += w
+    }
+    const a = sum / wsum
+    samples[i].hx = Math.cos(a)
+    samples[i].hz = Math.sin(a)
+  }
+  return { ...base, samples, duration: samples[n - 1].t }
+}
+
+/**
+ * A point where the walk would double back (turning more than ~110°) becomes a small loop beside
+ * it, so the camera turns round while walking instead of stopping and reversing.
+ */
+function withoutHairpins(pts: P3[], r = 0.45): P3[] {
+  const out: P3[] = []
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i]
+    if (i === 0 || i === pts.length - 1) {
+      out.push(p)
+      continue
+    }
+    const a = pts[i - 1]
+    const b = pts[i + 1]
+    const ix = p[0] - a[0]
+    const iz = p[2] - a[2]
+    const ox = b[0] - p[0]
+    const oz = b[2] - p[2]
+    const il = Math.hypot(ix, iz)
+    const ol = Math.hypot(ox, oz)
+    if (il < 1e-3 || ol < 1e-3 || (ix * ox + iz * oz) / (il * ol) > Math.cos((110 * Math.PI) / 180)) {
+      out.push(p)
+      continue
+    }
+    const d = [ix / il, iz / il]
+    // Loop towards the side the walk goes on to (left if it reverses exactly).
+    const cr = ix * oz - iz * ox
+    const sgn = Math.abs(cr) / (il * ol) > 0.05 ? Math.sign(cr) : 1
+    const nrm = [-d[1] * sgn * -1, d[0] * sgn * -1]
+    const rr = Math.min(r, il * 0.45, ol * 0.45)
+    const c = [p[0] - d[0] * rr * 0.5 + nrm[0] * rr, p[2] - d[1] * rr * 0.5 + nrm[1] * rr]
+    for (const deg of [0, 60, 120, 180]) {
+      const th = (deg * Math.PI) / 180
+      out.push([c[0] + rr * (-nrm[0] * Math.cos(th) + d[0] * Math.sin(th)), p[1], c[1] + rr * (-nrm[1] * Math.cos(th) + d[1] * Math.sin(th))])
+    }
+  }
+  return out
 }
 
 const dist3 = (a: P3, b: P3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
@@ -46,7 +229,7 @@ function catmull(p0: P3, p1: P3, p2: P3, p3: P3, t: number): P3 {
   return L(B1, B2, t1, t2)
 }
 
-function at(path: ReturnType<typeof tourPath>, s: number): P3 {
+function at(path: { line: P3[]; cum: number[]; length: number }, s: number): P3 {
   const { line, cum } = path
   if (s <= 0) return line[0]
   if (s >= path.length) return line[line.length - 1]
@@ -63,49 +246,44 @@ function at(path: ReturnType<typeof tourPath>, s: number): P3 {
   return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k]
 }
 
-/** Seconds for the whole walk: constant speed with a gentle start and stop. */
-export function tourDuration(tour: Tour, length: number) {
-  const ramp = Math.min(1.5, length / tour.speed / 3)
-  return length / tour.speed + ramp
-}
-
 export function tourFrames(project: Pick<Project, 'tour' | 'levels'>, fps: number) {
   const path = tourPath(project)
-  return Math.max(2, Math.ceil(tourDuration(project.tour, path.length) * fps) + 1)
+  return Math.max(2, Math.ceil(path.duration * fps) + 1)
 }
 
 /** Camera at frame `frame` of the walk: eye height, looking ahead along the path. */
 export function tourPose(project: Pick<Project, 'tour' | 'levels'>, frame: number, fps: number, path = tourPath(project)): CameraPose {
-  const v = project.tour.speed
-  const T = tourDuration(project.tour, path.length)
-  const ta = Math.min(1.5, path.length / v / 3)
-  const t = Math.max(0, Math.min(T, frame / fps))
-  const s = t < ta ? (0.5 * v * t * t) / ta : t > T - ta ? path.length - (0.5 * v * (T - t) * (T - t)) / ta : 0.5 * v * ta + v * (t - ta)
-  const pos = at(path, s)
-  // Heading: the path's direction averaged over the next ~2 m (Gaussian weights), so the camera
-  // turns into corners gently instead of snapping to each bend, like a steadicam operator.
-  let fx = 0
-  let fz = 0
-  const span = Math.min(2.2, Math.max(0.2, path.length * 0.5))
-  for (let k = 0; k <= 16; k++) {
-    const d = (k / 16) * span
-    const u = Math.max(0.03, Math.min(path.length - 0.03, s + d))
-    const p0 = at(path, u - 0.03)
-    const p1 = at(path, u + 0.03)
-    const tx = p1[0] - p0[0]
-    const tz = p1[2] - p0[2]
-    const tl = Math.hypot(tx, tz) || 1
-    const w = Math.exp(-((d / span - 0.25) ** 2) / 0.12)
-    fx += (tx / tl) * w
-    fz += (tz / tl) * w
+  const S = path.samples
+  let pos: P3
+  let fx: number
+  let fz: number
+  if (S.length < 2) {
+    pos = path.line[0] ?? [0, project.tour.eyeHeight, 0]
+    fx = 0
+    fz = -1
+  } else {
+    const t = Math.max(0, Math.min(path.duration, frame / fps))
+    let lo = 0
+    let hi = S.length - 1
+    while (hi - lo > 1) {
+      const m = (lo + hi) >> 1
+      if (S[m].t <= t) lo = m
+      else hi = m
+    }
+    const k = Math.max(0, Math.min(1, (t - S[lo].t) / (S[hi].t - S[lo].t || 1)))
+    pos = at(path, S[lo].s + (S[hi].s - S[lo].s) * k)
+    // Turn the view between the two samples (by angle, so it never cuts across).
+    const a0 = Math.atan2(S[lo].hz, S[lo].hx)
+    let da = Math.atan2(S[hi].hz, S[hi].hx) - a0
+    while (da > Math.PI) da -= 2 * Math.PI
+    while (da < -Math.PI) da += 2 * Math.PI
+    fx = Math.cos(a0 + da * k)
+    fz = Math.sin(a0 + da * k)
   }
-  const fl = Math.hypot(fx, fz) || 1
-  fx /= fl
-  fz /= fl
   // Look slightly down (about 6°) like a person walking through.
   const fy = -0.1
-  const n = Math.hypot(fx, fy, fz)
-  const f: P3 = [fx / n, fy / n, fz / n]
+  const nn = Math.hypot(fx, fy, fz)
+  const f: P3 = [fx / nn, fy / nn, fz / nn]
   const target: P3 = [pos[0] + f[0], pos[1] + f[1], pos[2] + f[2]]
   return { target, radius: 1, polar: Math.acos(-f[1]), azimuth: Math.atan2(-f[0], -f[2]), focal: project.tour.focal }
 }
@@ -185,7 +363,29 @@ export function autoTour(project: Project, levelId: string, uid: () => string): 
     }
     pts.push(faces[order[i]].center)
   }
+  const dedup: Vec2[] = []
+  for (const p of pts) if (!dedup.length || dist(dedup[dedup.length - 1], p) > 0.35) dedup.push(p)
+  // A room you leave the way you came in: walk round its middle instead of turning on the spot.
   const clean: Vec2[] = []
-  for (const p of pts) if (!clean.length || dist(clean[clean.length - 1], p) > 0.35) clean.push(p)
+  dedup.forEach((p, i) => {
+    const f = faces.find((x) => dist(x.center, p) < 1e-6)
+    const a = dedup[i - 1]
+    const b = dedup[i + 1]
+    if (!f || !a || !b) return void clean.push(p)
+    const din = norm(sub(p, a))
+    const dout = norm(sub(b, p))
+    if (din[0] * dout[0] + din[1] * dout[1] > Math.cos((100 * Math.PI) / 180)) return void clean.push(p)
+    const room = distanceToPolygon(p, f.inner)
+    const r = Math.max(0.4, Math.min(1.1, room * 0.55))
+    const nrm: Vec2 = [-din[1], din[0]]
+    // Round the side with more space.
+    const free = (sgn: number) => [0.5, 1].every((k) => pointInPolygon(add(p, mul(nrm, sgn * r * k)), f.inner))
+    const sgn = free(1) ? 1 : free(-1) ? -1 : 1
+    for (const deg of [-50, 20, 90, 160, 230]) {
+      const th = (deg * Math.PI) / 180
+      // Around the middle, starting on the near side and coming back to it.
+      clean.push(add(p, add(mul(din, r * Math.sin(th)), mul(nrm, -sgn * r * Math.cos(th)))))
+    }
+  })
   return { points: clean.map((p) => ({ id: uid(), levelId, p })), doors: [...used] }
 }

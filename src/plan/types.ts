@@ -93,7 +93,22 @@ export interface RoomInfo {
   walls: Finish
   ceiling: Finish
   trim?: RoomTrim
+  /** Exposed ceiling beams (rafters) across the room. */
+  beams?: CeilingBeams
 }
+
+export interface CeilingBeams {
+  /** Centre to centre, m. */
+  spacing: number
+  width: number
+  /** How far they hang below the ceiling, m. */
+  depth: number
+  color: string
+  /** Run across the room's short side (usual) or along its long side. */
+  across: boolean
+}
+
+export const DEFAULT_BEAMS: CeilingBeams = { spacing: 1.2, width: 0.1, depth: 0.16, color: '#f4f3f0', across: true }
 
 export interface TourPoint {
   id: string
@@ -108,6 +123,8 @@ export interface Tour {
   eyeHeight: number
   /** Lens, mm (full frame). */
   focal: number
+  /** Show the ceilings while walking and in the video (default on). */
+  ceilings?: boolean
 }
 
 export const OPENING_DEFAULTS: Record<OpeningKind, { label: string; width: number; height: number; sill: number; door: boolean }> = {

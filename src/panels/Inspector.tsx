@@ -5,12 +5,13 @@ import { cn } from '@/lib/cn'
 import { actions } from '@/lib/actions'
 import { analyse, add, dist, mul, norm, pointInPolygon, sub, wallLength } from '@/plan/geometry'
 import { levelElevations, roomFor } from '@/plan/levels'
-import { DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, DEFAULT_TRIM, DEFAULT_WALL_FINISH, OPENING_DEFAULTS, type Finish, type OpeningKind, type PanelStyle, type RoomInfo, type RoomTrim, type SkirtStyle, type Vec2 } from '@/plan/types'
+import { DEFAULT_BEAMS, DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, DEFAULT_TRIM, DEFAULT_WALL_FINISH, OPENING_DEFAULTS, type CeilingBeams, type Finish, type OpeningKind, type PanelStyle, type RoomInfo, type RoomTrim, type SkirtStyle, type Vec2 } from '@/plan/types'
 import { uid, useActiveProject, useWorkspace, type PlanData } from '@/store/workspace'
-import { Button, Field, Select, inputCls } from '@/ui/primitives'
+import { Button, Field, Select, Toggle, inputCls } from '@/ui/primitives'
 import { MATERIAL_LIBRARY, PAINT_COLORS, presetById } from '@/viewport/materialPresets'
 import { FinishPreview, MaterialGallery } from './MaterialGallery'
 import { PropertiesPanel } from './Properties'
+import { TOUR_SPEEDS, speedLabel } from './TourBar'
 
 /** Right-hand panel: whatever is selected in the plan or the 3D view. */
 export function Inspector() {
@@ -276,8 +277,50 @@ function RoomInspector({ levelId, at }: { levelId: string; at: Vec2 }) {
       <ElectricalSection levelId={levelId} face={face.index} polygon={face.polygon} info={info} />
       <div className="space-y-1.5 border-t border-line pt-2">
         <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Ceiling</span>
-        <FinishPicker value={info?.ceiling ?? DEFAULT_CEILING_FINISH} materials={[]} onChange={(ceiling) => update('Ceiling', true, { ceiling })} />
+        <FinishPicker value={info?.ceiling ?? DEFAULT_CEILING_FINISH} materials={CEILINGS} onChange={(ceiling) => update('Ceiling', true, { ceiling })} />
+        <BeamsSection beams={info?.beams} onChange={(beams, first) => update('Ceiling beams', first, { beams })} />
       </div>
+    </div>
+  )
+}
+
+const CEILINGS = MATERIAL_LIBRARY.filter((m) => m.category === 'Ceiling').map((m) => m.id)
+
+/** Exposed beams under the ceiling: on or off, spacing, size, colour. */
+function BeamsSection({ beams, onChange }: { beams?: CeilingBeams; onChange: (b: CeilingBeams | undefined, first: boolean) => void }) {
+  const b = beams ?? DEFAULT_BEAMS
+  const set = (patch: Partial<CeilingBeams>, first = true) => onChange({ ...b, ...patch }, first)
+  return (
+    <div className="space-y-1.5 pt-1">
+      <Field label="Beams">
+        <div className="flex items-center gap-2">
+          <Toggle checked={!!beams} onChange={(on) => onChange(on ? b : undefined, true)} />
+          {beams && (
+            <div className="grid flex-1 grid-cols-2 gap-0.5 rounded-md border border-line-strong bg-app/60 p-0.5">
+              {[true, false].map((across) => (
+                <button key={String(across)} type="button" onClick={() => set({ across })} className={cn('h-5.5 rounded text-2xs transition-colors', b.across === across ? 'bg-active text-fg' : 'text-dim hover:text-fg')}>
+                  {across ? 'Across' : 'Lengthwise'}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </Field>
+      {beams && (
+        <>
+          <Cm label="Spacing" value={b.spacing} min={0.4} max={3} onChange={(v, f) => set({ spacing: v }, f)} />
+          <Cm label="Width" value={b.width} min={0.04} max={0.4} onChange={(v, f) => set({ width: v }, f)} />
+          <Cm label="Depth" value={b.depth} min={0.04} max={0.5} onChange={(v, f) => set({ depth: v }, f)} />
+          <Field label="Colour">
+            <div className="flex flex-wrap items-center gap-1">
+              {['#f4f3f0', '#ffffff', '#c9a274', '#8d6e4c', '#5b4636', '#3f4245', '#1d1d1d'].map((c) => (
+                <button key={c} type="button" aria-label={c} onClick={() => set({ color: c })} className={cn('size-5 rounded border', b.color.toLowerCase() === c ? 'border-white ring-1 ring-accent' : 'border-black/30')} style={{ background: c }} />
+              ))}
+              <input type="color" value={b.color} onChange={(e) => set({ color: e.target.value }, false)} className="h-5 w-7 cursor-pointer rounded border border-line-strong bg-transparent" />
+            </div>
+          </Field>
+        </>
+      )}
     </div>
   )
 }
@@ -446,7 +489,7 @@ export function TourSettings() {
   return (
     <>
       <Field label="Speed">
-        <Select value={String(t.speed)} onChange={(v) => set({ speed: Number(v) })} options={[0.4, 0.55, 0.7, 0.9, 1.2].map((v) => ({ value: String(v), label: `${v} m/s${v === 0.7 ? ' · walk' : v < 0.6 ? ' · slow' : ''}` }))} />
+        <Select value={String(t.speed)} onChange={(v) => set({ speed: Number(v) })} options={[...new Set([...TOUR_SPEEDS, t.speed])].sort((a, b) => a - b).map((v) => ({ value: String(v), label: speedLabel(v) }))} />
       </Field>
       <Field label="Lens">
         <Select value={String(t.focal)} onChange={(v) => set({ focal: Number(v) })} options={[14, 18, 20, 24, 28, 35].map((v) => ({ value: String(v), label: `${v} mm` }))} />

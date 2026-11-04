@@ -6,7 +6,7 @@ export type DetailTexture = 'oak' | 'walnut' | 'birch' | 'marble' | 'concrete' |
 export interface MaterialPreset {
   id: string
   name: string
-  category: 'Metal' | 'Coating' | 'Plastic' | 'Wood' | 'Stone' | 'Glass' | 'Fabric' | 'Floor' | 'Wood floor'
+  category: 'Metal' | 'Coating' | 'Plastic' | 'Wood' | 'Stone' | 'Glass' | 'Fabric' | 'Floor' | 'Wood floor' | 'Ceiling'
   color: string
   roughness: number
   metalness: number
@@ -18,6 +18,15 @@ export interface MaterialPreset {
   texture?: DetailTexture
   /** Wood floors: drawn board by board in full colour (planks, parquet patterns). */
   floor?: FloorSpec
+  /** Ceiling boards: drawn panel by panel (perforation, wood wool, joints), with relief. */
+  ceiling?: CeilingSpec
+}
+
+/** A ceiling of boards: what they are and how big one repeat of the pattern is (m). */
+export interface CeilingSpec {
+  kind: 'perforated' | 'perforated-tiles' | 'wood-wool' | 'slats'
+  /** Width × length of one repeat of the pattern, in metres. */
+  tile: [number, number]
 }
 
 const OAK = { base: '#c9a274', vary_tone: 0.09, grain: 1, grainColor: '#7a5532', joint: 0.8 }
@@ -104,6 +113,13 @@ export const MATERIAL_LIBRARY: MaterialPreset[] = [
   { id: 'carpet', name: 'Carpet', category: 'Floor', color: '#9d958a', roughness: 1, metalness: 0, sheen: 0.5, texture: 'fabric' },
   { id: 'polished-concrete', name: 'Polished concrete', category: 'Floor', color: '#a7a6a2', roughness: 0.4, metalness: 0, texture: 'concrete' },
   ...WOOD_FLOORS,
+
+  // Ceilings (acoustic boards, as in Danish homes).
+  { id: 'ceil-perforated', name: 'Perforated acoustic boards', category: 'Ceiling', color: '#f4f3f0', roughness: 0.85, metalness: 0, ceiling: { kind: 'perforated', tile: [1.2, 1.2] } },
+  { id: 'ceil-perforated-tiles', name: 'Perforated acoustic tiles', category: 'Ceiling', color: '#f6f6f4', roughness: 0.8, metalness: 0, ceiling: { kind: 'perforated-tiles', tile: [0.6, 0.6] } },
+  { id: 'ceil-wood-wool', name: 'Wood-wool panels, white', category: 'Ceiling', color: '#ebe9e4', roughness: 0.95, metalness: 0, ceiling: { kind: 'wood-wool', tile: [1.2, 1.2] } },
+  { id: 'ceil-wood-wool-grey', name: 'Wood-wool panels, natural', category: 'Ceiling', color: '#c9c5bd', roughness: 0.95, metalness: 0, ceiling: { kind: 'wood-wool', tile: [1.2, 1.2] } },
+  { id: 'ceil-slats', name: 'Wood slats on felt', category: 'Ceiling', color: '#c9a274', roughness: 0.7, metalness: 0, ceiling: { kind: 'slats', tile: [0.6, 1.2] } },
 ]
 
 /** Interior paint colours for walls and ceilings. */
