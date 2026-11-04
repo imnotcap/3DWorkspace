@@ -30,9 +30,28 @@ export function HouseLevel({ project, level, index, ceilings }: { project: Proje
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stairKey, below, level.id])
 
+  // Radiators on this floor: wall panels are built around them.
+  const first = project.levels[0].id
+  const radKey = project.objects
+    .filter((o) => o.furniture?.item === 'radiator' && (o.levelId ?? first) === level.id)
+    .map((o) => `${o.transform.position}:${o.transform.rotation}:${o.transform.scale}:${o.furniture!.size}`)
+    .join('|')
+  const obstacles = useMemo(
+    () =>
+      project.objects
+        .filter((o) => o.furniture?.item === 'radiator' && (o.levelId ?? first) === level.id)
+        .map((o) => {
+          const f = footprint(o)
+          const y0 = o.transform.position[1]
+          return { c: f.c, w: f.w, d: f.d, yaw: f.yaw, y0, y1: y0 + o.furniture!.size[1] * o.transform.scale[1] }
+        }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [radKey, level.id],
+  )
+
   const built = useMemo(
-    () => buildLevel({ level, levelIndex: index, walls, openings, rooms: project.rooms, floorHoles: holes.floor, ceilingHoles: holes.ceiling, onUpgrade: () => invalidate() }),
-    [level, index, walls, openings, project.rooms, holes],
+    () => buildLevel({ level, levelIndex: index, walls, openings, rooms: project.rooms, floorHoles: holes.floor, ceilingHoles: holes.ceiling, obstacles, onUpgrade: () => invalidate() }),
+    [level, index, walls, openings, project.rooms, holes, obstacles],
   )
   useEffect(
     () => () =>

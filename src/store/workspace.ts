@@ -287,6 +287,8 @@ interface WorkspaceState {
   reparent: (id: string, parentId: string | null, transform: Transform) => void
   /** One undo step: remove `id` and add `objects` in its place (Separate into parts). */
   replaceObject: (id: string, objects: Omit<SceneObject, 'id'>[]) => void
+  /** One undo step: remove `remove` and add `objects` (e.g. re-placing a room's sockets). */
+  swapObjects: (label: string, remove: string[], objects: Omit<SceneObject, 'id'>[]) => void
   duplicateObject: (id: string) => string | null
   /** Silent update (stats, live scrubbing). Use `commit` for undoable edits. */
   updateObject: (id: string, patch: Partial<SceneObject>) => void
@@ -498,6 +500,21 @@ export const useWorkspace = create<WorkspaceState>()(
               return { ...p, objects: [...p.objects.filter((o) => o.id !== id), ...added] }
             }),
             selectedId: ids[0] ?? null,
+          }),
+        )
+      },
+      swapObjects: (label, remove, objects) => {
+        get().checkpoint(label)
+        const gone = new Set(remove)
+        set((s) =>
+          patchActive(s, (p) => {
+            const taken = p.objects.filter((o) => !gone.has(o.id)).map((o) => o.name)
+            const added = objects.map((o) => {
+              const name = uniqueName(o.name, taken)
+              taken.push(name)
+              return { ...o, id: uid(), name }
+            })
+            return { ...p, objects: [...p.objects.filter((o) => !gone.has(o.id)), ...added] }
           }),
         )
       },

@@ -5,7 +5,7 @@ import { actions } from '@/lib/actions'
 import { DRAWN_KINDS, OPENING_DEFAULTS, type OpeningKind } from '@/plan/types'
 import { newLevel, useActiveProject, useWorkspace, type PlanTool, type View } from '@/store/workspace'
 import { viewport } from '@/viewport/bridge'
-import { Tooltip } from '@/ui/primitives'
+import { Select, Tooltip } from '@/ui/primitives'
 
 
 const VIEWS: { id: View; label: string; icon: ReactNode }[] = [
@@ -88,13 +88,7 @@ export function PlanToolbar() {
       {(tool === 'wall' || tool === 'room') && (
         <label className="flex items-center gap-1.5 text-2xs text-dim">
           Thickness
-          <select value={thickness} onChange={(e) => updateSettings({ wallThickness: Number(e.target.value) })} className="h-6 rounded-md bg-raised px-1.5 text-xs text-fg outline-none">
-            {[0.1, 0.12, 0.15, 0.2, 0.25, 0.3, 0.4].map((t) => (
-              <option key={t} value={t}>
-                {Math.round(t * 100)} cm
-              </option>
-            ))}
-          </select>
+          <Select size="sm" aria-label="Wall thickness" value={String(thickness)} onChange={(v) => updateSettings({ wallThickness: Number(v) })} options={[0.08, 0.1, 0.12, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4].map((t) => ({ value: String(t), label: `${Math.round(t * 100)} cm` }))} />
         </label>
       )}
       {(tool === 'door' || tool === 'window') && (
@@ -126,13 +120,7 @@ export function PlanToolbar() {
           </Seg>
         </Tooltip>
         {snap && (
-          <select aria-label="Grid size" value={grid} onChange={(e) => updateSettings({ grid: Number(e.target.value) })} className="h-6 rounded-md bg-raised px-1 text-2xs text-fg outline-none">
-            {[0.01, 0.05, 0.1, 0.25, 0.5].map((g) => (
-              <option key={g} value={g}>
-                {Math.round(g * 100)} cm
-              </option>
-            ))}
-          </select>
+          <Select size="sm" aria-label="Grid size" value={String(grid)} onChange={(v) => updateSettings({ grid: Number(v) })} options={[0.01, 0.05, 0.1, 0.25, 0.5].map((g) => ({ value: String(g), label: `${Math.round(g * 100)} cm` }))} />
         )}
       </div>
       <Divider />

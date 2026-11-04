@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { forwardRef, useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { forwardRef, useEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { cn } from '@/lib/cn'
 
 export const ease = [0.2, 0, 0, 1] as const
@@ -173,20 +174,176 @@ export function Field({ label, children, hint }: { label: string; children: Reac
 export const inputCls =
   'h-6.5 w-full rounded-md border border-line-strong bg-app/60 px-2 text-xs text-fg placeholder:text-faint outline-none transition-colors focus:border-accent'
 
-export function Select<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: { value: T; label: string }[] }) {
+export interface SelectOption<T extends string> {
+  value: T
+  label: string
+  /** Shown before the label (a swatch, a texture thumbnail…). */
+  preview?: ReactNode
+  hint?: string
+}
+
+/**
+ * A dropdown in the app's own look (the browser's native list ignores the theme): a button and a
+ * floating list, kept on screen, with the keyboard (arrows, Home/End, Enter, Esc, type to jump).
+ */
+export function Select<T extends string>({
+  value,
+  onChange,
+  options,
+  size = 'md',
+  className,
+  'aria-label': ariaLabel,
+}: {
+  value: T
+  onChange: (v: T) => void
+  options: SelectOption<T>[]
+  size?: 'sm' | 'md'
+  className?: string
+  'aria-label'?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [hi, setHi] = useState(0)
+  const [pos, setPos] = useState<{ left: number; top: number; width: number; up: boolean; max: number } | null>(null)
+  const btn = useRef<HTMLButtonElement>(null)
+  const list = useRef<HTMLDivElement>(null)
+  const typed = useRef({ s: '', t: 0 })
+  const current = options.find((o) => o.value === value)
+
+  const place = () => {
+    const r = btn.current?.getBoundingClientRect()
+    if (!r) return
+    const below = window.innerHeight - r.bottom - 8
+    const above = r.top - 8
+    const want = Math.min(320, options.length * 28 + 10)
+    const up = below < want && above > below
+    setPos({ left: Math.max(8, Math.min(r.left, window.innerWidth - Math.max(r.width, 160) - 8)), top: up ? window.innerHeight - r.top + 4 : r.bottom + 4, width: r.width, up, max: Math.max(120, Math.min(320, up ? above : below)) })
+  }
+  const show = () => {
+    place()
+    setHi(Math.max(0, options.findIndex((o) => o.value === value)))
+    setOpen(true)
+  }
+  const pick = (i: number) => {
+    const o = options[i]
+    if (o) onChange(o.value)
+    setOpen(false)
+    btn.current?.focus()
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const close = (e: PointerEvent) => !btn.current?.contains(e.target as Node) && !list.current?.contains(e.target as Node) && setOpen(false)
+    const reflow = (e: Event) => (list.current?.contains(e.target as Node) ? undefined : setOpen(false))
+    window.addEventListener('pointerdown', close)
+    window.addEventListener('resize', reflow)
+    window.addEventListener('scroll', reflow, true)
+    return () => {
+      window.removeEventListener('pointerdown', close)
+      window.removeEventListener('resize', reflow)
+      window.removeEventListener('scroll', reflow, true)
+    }
+  }, [open])
+  useEffect(() => {
+    if (open) list.current?.querySelector<HTMLElement>(`[data-i="${hi}"]`)?.scrollIntoView({ block: 'nearest' })
+  }, [open, hi])
+
+  const onKey = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!open) {
+      if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) {
+        e.preventDefault()
+        show()
+      }
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      setOpen(false)
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHi((h) => Math.min(options.length - 1, h + 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHi((h) => Math.max(0, h - 1))
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault()
+      setHi(e.key === 'Home' ? 0 : options.length - 1)
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      pick(hi)
+    } else if (e.key === 'Tab') setOpen(false)
+    else if (e.key.length === 1) {
+      const now = performance.now()
+      typed.current = { s: (now - typed.current.t < 700 ? typed.current.s : '') + e.key.toLowerCase(), t: now }
+      const i = options.findIndex((o) => o.label.toLowerCase().startsWith(typed.current.s))
+      if (i >= 0) setHi(i)
+    }
+  }
+
   return (
-    <div className="relative">
-      <select value={value} onChange={(e) => onChange(e.target.value as T)} className={cn(inputCls, 'appearance-none pr-6')}>
-        {options.map((o) => (
-          <option key={o.value} value={o.value} className="bg-panel-2">
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <svg className="pointer-events-none absolute right-2 top-1/2 size-2.5 -translate-y-1/2 text-dim" viewBox="0 0 10 10">
-        <path d="M2 3.5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.3" />
-      </svg>
-    </div>
+    <>
+      <button
+        ref={btn}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        onClick={(e) => {
+          e.preventDefault()
+          if (open) setOpen(false)
+          else show()
+        }}
+        onKeyDown={onKey}
+        className={cn(
+          inputCls,
+          'flex items-center gap-1.5 text-left',
+          size === 'sm' && 'h-6 w-auto border-transparent bg-raised px-1.5 text-2xs',
+          open && 'border-accent',
+          className,
+        )}
+      >
+        {current?.preview}
+        <span className="min-w-0 flex-1 truncate">{current?.label ?? ''}</span>
+        <svg className={cn('size-2.5 shrink-0 text-dim transition-transform', open && 'rotate-180')} viewBox="0 0 10 10">
+          <path d="M2 3.5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.3" />
+        </svg>
+      </button>
+      {createPortal(
+        <AnimatePresence>
+          {open && pos && (
+            <motion.div
+              ref={list}
+              role="listbox"
+              initial={{ opacity: 0, y: pos.up ? 3 : -3 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, transition: { duration: 0.06 } }}
+              transition={{ duration: 0.1, ease }}
+              style={{ left: pos.left, ...(pos.up ? { bottom: pos.top } : { top: pos.top }), minWidth: Math.max(pos.width, 120), maxHeight: pos.max }}
+              className="fixed z-[100] overflow-y-auto rounded-lg border border-line-strong bg-panel-2/95 p-1 shadow-xl shadow-black/50 backdrop-blur-md"
+            >
+              {options.map((o, i) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  role="option"
+                  aria-selected={o.value === value}
+                  data-i={i}
+                  onPointerEnter={() => setHi(i)}
+                  onClick={() => pick(i)}
+                  className={cn('flex min-h-6.5 w-full items-center gap-2 rounded-md px-2 py-0.5 text-left text-xs', i === hi ? 'bg-accent/90 text-white' : 'text-fg')}
+                >
+                  <span className="w-3 shrink-0 text-center text-2xs">{o.value === value ? '✓' : ''}</span>
+                  {o.preview}
+                  <span className="flex-1 whitespace-nowrap">{o.label}</span>
+                  {o.hint && <span className={cn('text-2xs', i === hi ? 'text-white/70' : 'text-faint')}>{o.hint}</span>}
+                </button>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
+    </>
   )
 }
 

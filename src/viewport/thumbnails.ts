@@ -151,7 +151,10 @@ export function materialThumb(presetId: string, shape: 'ball' | 'tile' = 'ball')
     await new Promise<void>((r) => ('requestIdleCallback' in window ? requestIdleCallback(() => r(), { timeout: 1500 }) : setTimeout(r, 30)))
     let url: string
     let keep = true
-    if (preset.floor) {
+    if (preset.ceiling) {
+      // Ceiling boards: about 1.2 m of them, flat, as drawn.
+      url = (await import('./ceilingTextures')).ceilingPreview(preset.ceiling, 256)
+    } else if (preset.floor) {
       // The photographed floor if there is one (about 1.2 m of it), else boards cut from wood photos.
       const set = await pbrSet(preset.id).catch(() => null)
       const img = set?.map?.image as HTMLImageElement | undefined

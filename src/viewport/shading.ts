@@ -1,5 +1,6 @@
-import { BufferAttribute, BufferGeometry, CanvasTexture, MathUtils, MeshPhysicalMaterial, MeshStandardMaterial, RepeatWrapping, SRGBColorSpace, Vector2, type InterleavedBufferAttribute, type Material, type Texture } from 'three'
+import { BufferAttribute, BufferGeometry, CanvasTexture, Color, MathUtils, MeshPhysicalMaterial, MeshStandardMaterial, RepeatWrapping, SRGBColorSpace, Vector2, type InterleavedBufferAttribute, type Material, type Texture } from 'three'
 import { detailTexture } from './detailTextures'
+import { ceilingTextures } from './ceilingTextures'
 import { floorCanvases, loadWood, woodReady } from './floorTextures'
 import { presetById } from './materialPresets'
 import { pbrSet } from './pbrTextures'
@@ -65,6 +66,58 @@ export function reshade(geometry: BufferGeometry, mode: Exclude<ShadeMode, 'orig
 
 /* ───────── Material overrides ───────── */
 
+const averages = new WeakMap<object, Color>()
+
+/** Mean colour of a texture's image (linear), from a 16 × 16 copy. */
+function averageColour(tex: Texture | null | undefined): Color | null {
+  const img = tex?.image as (CanvasImageSource & { width: number; height: number }) | undefined
+  if (!img || !img.width || typeof document === 'undefined') return null
+  const hit = averages.get(img)
+  if (hit) return hit
+  const c = document.createElement('canvas')
+  c.width = c.height = 16
+  const ctx = c.getContext('2d', { willReadFrequently: true })
+  if (!ctx) return null
+  ctx.drawImage(img, 0, 0, 16, 16)
+  const d = ctx.getImageData(0, 0, 16, 16).data
+  const lin = (v: number) => {
+    const x = v / 255
+    return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4
+  }
+  let r = 0
+  let g = 0
+  let b = 0
+  for (let i = 0; i < d.length; i += 4) {
+    r += lin(d[i])
+    g += lin(d[i + 1])
+    b += lin(d[i + 2])
+  }
+  const n = d.length / 4
+  const out = new Color().setRGB(r / n, g / n, b / n)
+  averages.set(img, out)
+  return out
+}
+
+/**
+ * Recolour a textured material without losing its texture: the colour map is multiplied by
+ * (target ÷ the map's mean colour), so on average the surface shows the chosen colour while the
+ * grain, joints and veining keep their light and dark. The preset's own colour shows the map as is.
+ */
+export function tintTexture(m: MeshStandardMaterial, target: string, presetColor: string) {
+  if (target.toLowerCase() === presetColor.toLowerCase()) {
+    m.color.set('#ffffff')
+    return
+  }
+  const avg = averageColour(m.map)
+  const t = new Color(target)
+  if (!avg) {
+    m.color.copy(t)
+    return
+  }
+  const k = (a: number, b: number) => Math.min(8, a / Math.max(b, 1e-3))
+  m.color.setRGB(k(t.r, avg.r), k(t.g, avg.g), k(t.b, avg.b))
+}
+
 /**
  * Surface material for one material slot: the generated material, or the user's override.
  * Library presets get physical properties at once, a procedural texture as a placeholder,
@@ -101,6 +154,23 @@ export function surfaceFor(original: Material, o: MaterialOverride | null, opts:
   }
   // Metric UVs (Claude parts): one repeat per `tile` metres. Other meshes: one repeat per UV unit.
   const repeat = (tile: number) => (opts.metric ? 1 / tile : 1)
+  if (preset?.ceiling) {
+    // Ceiling boards: drawn at real size, joints and perforation as relief. Repeats are metric.
+    const t = ceilingTextures(preset.id, preset.ceiling)
+    const at = (x: Texture) => {
+      const c = x.clone()
+      c.repeat.set(opts.metric ? 1 / preset.ceiling!.tile[0] : 1, opts.metric ? 1 / preset.ceiling!.tile[1] : 1)
+      return c
+    }
+    m.map = at(t.map)
+    m.normalMap = at(t.normal)
+    m.normalScale = new Vector2(0.8, 0.8)
+    // The drawn boards are neutral: the colour (the preset's own, or the one picked) gives the tone.
+    tintTexture(m, o.color, '')
+    m.needsUpdate = true
+    m.userData.override = true
+    return m
+  }
   if (preset?.floor) {
     // Wood floors: every board cut from a photographed wood (fetched at build time), with its
     // joints and grain as relief. Until the photos have loaded, drawn grain stands in.
@@ -114,6 +184,7 @@ export function surfaceFor(original: Material, o: MaterialOverride | null, opts:
       }
       m.map = at(t.map)
       m.normalMap = at(t.normal)
+      tintTexture(m, o.color, preset.color)
       m.needsUpdate = true
     }
     apply()
@@ -133,7 +204,7 @@ export function surfaceFor(original: Material, o: MaterialOverride | null, opts:
       m.normalMap = tex(set.normalMap)
       m.roughnessMap = tex(set.roughnessMap)
       m.aoMap = tex(set.aoMap)
-      m.color.set(o.color.toLowerCase() === preset.color.toLowerCase() ? '#ffffff' : o.color)
+      tintTexture(m, o.color, preset.color)
       m.needsUpdate = true
       opts.onUpgrade?.()
     })
@@ -144,7 +215,6 @@ export function surfaceFor(original: Material, o: MaterialOverride | null, opts:
         opts.onUpgrade?.()
       })
     m.normalScale = new Vector2(0.9, 0.9)
-    m.color.set(o.color.toLowerCase() === preset.color.toLowerCase() ? '#ffffff' : o.color)
     m.needsUpdate = true
     m.userData.override = true
     return m
@@ -167,8 +237,8 @@ export function surfaceFor(original: Material, o: MaterialOverride | null, opts:
       m.roughnessMap = tex(set.roughnessMap)
       m.metalnessMap = tex(set.metalnessMap)
       m.aoMap = tex(set.aoMap)
-      // Real colour maps already carry their colour: show them untinted unless the user picked a colour.
-      if (o.color.toLowerCase() === preset.color.toLowerCase()) m.color.set('#ffffff')
+      // Real colour maps already carry their colour: shown as they are, or recoloured keeping their texture.
+      tintTexture(m, o.color, preset.color)
       m.needsUpdate = true
       opts.onUpgrade?.()
     })

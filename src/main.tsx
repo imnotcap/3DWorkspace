@@ -3,6 +3,10 @@ import { createRoot } from 'react-dom/client'
 import { App } from './app/App'
 import { initPersistence } from './lib/persistence'
 import { useWorkspace } from './store/workspace'
+// Fonts served with the site (no round trip to a font CDN before the first paint).
+import '@fontsource-variable/inter'
+import '@fontsource/jetbrains-mono/400.css'
+import '@fontsource/jetbrains-mono/500.css'
 import './index.css'
 
 void initPersistence()
