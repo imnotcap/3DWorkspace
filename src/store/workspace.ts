@@ -159,6 +159,18 @@ export interface Project {
   tour: Tour
   /** The render camera follows the tour (walkthrough video) instead of camera keyframes. */
   useTour: boolean
+  /** An imported drawing shown under the plan (plan coordinates, metres), to trace or check against. */
+  underlay?: Underlay | null
+}
+
+export interface Underlay {
+  blob: Blob
+  url: string
+  x: number
+  y: number
+  w: number
+  h: number
+  opacity: number
 }
 
 /** Everything in the house plan, as one undoable unit. */
@@ -313,6 +325,7 @@ interface WorkspaceState {
   setPlacing: (item: string | null) => void
   setOpeningKind: (k: OpeningKind) => void
   setUseTour: (on: boolean) => void
+  setUnderlay: (u: Underlay | null) => void
   /** Replace the active project's contents (a template). */
   loadTemplate: (t: Pick<Project, 'name' | 'levels' | 'walls' | 'openings' | 'rooms' | 'tour'> & { objects: Omit<SceneObject, 'id'>[] }) => void
 }
@@ -708,6 +721,7 @@ export const useWorkspace = create<WorkspaceState>()(
       setPlacing: (placing) => set({ placing, planTool: 'select' }),
       setOpeningKind: (openingKind) => set({ openingKind }),
       setUseTour: (useTour) => set((s) => patchActive(s, (p) => ({ ...p, useTour }))),
+      setUnderlay: (underlay) => set((s) => patchActive(s, (p) => ({ ...p, underlay }))),
       loadTemplate: (t) => {
         get().checkpoint('Template')
         set((s) => ({

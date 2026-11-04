@@ -20,8 +20,8 @@ The workspace shows the **plan** (2D), the **3D view**, or both side by side (**
 | Wall | W | Click corner to corner. Snaps to wall ends, onto walls (T-joints), to 15° angles, to the 5 cm grid and into line with other corners. Closing the loop or ending on a wall finishes; Esc or right-click stops. |
 | Room | M | Drag a rectangle: four walls (sides that already have a wall are skipped). |
 | Curve | A | Click a corner, then another corner, pull the curve out and click: a curved wall. Between two corners of the same wall it bends that wall; across a corner (two walls) it replaces both with one smooth rounding. Snaps to a half circle; Shift is free. |
-| Door | D | Door, double door, sliding door or plain opening, placed on the wall under the pointer and opening towards the side you click on. |
-| Window | O | Window, wide window or French window. |
+| Door | D | Door or double door: click on a wall. Sliding door or plain opening: drag along the wall from one end to the other (or click, then click the other end); the stretch it takes shows in blue. |
+| Window | O | Window or floor window (down to the floor): drag along a wall to set its width, following curved walls too. French window: click. |
 | Tour | T | Click to lay out a walkthrough path; **Auto tour** makes one through every room. |
 
 - **Rooms are found automatically** from the walls: each enclosed space becomes a room with its floor area (inside the walls), name and finishes. Walls are mitred at corners and trimmed at T-joints; openings are cut exactly.
@@ -31,6 +31,10 @@ The workspace shows the **plan** (2D), the **3D view**, or both side by side (**
 - **Inspector** (right): wall length, thickness and height (lower = half wall); door and window type, size, sill, hinge side, swing side and how far it stands open; room name; floor height.
 - **Templates:** a furnished two-bedroom apartment, a two-storey house, or an empty plan.
 - Undo/redo covers the plan, the furniture and the finishes.
+
+## Import a floor plan
+
+**Importér** (top bar) reads a drawing of a plan: an image (PNG, JPG) or the first page of a PDF. The walls are found from its thick lines (thin lines, door swings, furniture and text are ignored), joined at corners and T-joints, and gaps in them become windows on outside walls and doors inside. Enter the building's outside width so the scale is right, and **Create plan** makes a new project with the walls, doors and windows and no furniture. The drawing stays faintly under the plan (opacity, or remove it, in the Inspector), so you can check the result and trace anything it missed.
 
 ## Paint and finishes
 

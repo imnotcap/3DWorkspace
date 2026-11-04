@@ -435,7 +435,7 @@ function buildOpening(o: Opening, g: WallGeom, height: number, interior: 'left' 
       grp.add(p)
     }
   }
-  if (o.kind === 'window' || o.kind === 'wide-window') {
+  if (o.kind === 'window' || o.kind === 'wide-window' || o.kind === 'floor-window') {
     const fw = 0.06
     const depth = 0.07
     // Outer frame.
@@ -456,11 +456,10 @@ function buildOpening(o: Opening, g: WallGeom, height: number, interior: 'left' 
       sash.position.set(sx, fw, 0)
       grp.add(sash)
     }
-    // Window board inside, sill outside. Their tops stand 4 mm proud of the hole's bottom (not in
-    // the same plane as the wall's reveal, which would flicker), and they stop 2 mm short of the
-    // wall faces' ends so no faces coincide.
-    grp.add(box(W + 0.06, 0.025, T / 2 + 0.04, frameM, 0, -0.0125 + 0.004, zIn * (T / 4 + 0.02)))
-    grp.add(box(W + 0.04, 0.03, T / 2 + 0.05, ALU, 0, -0.015 + 0.004, -zIn * (T / 4 + 0.025)))
+    // Window board inside, sill outside (not on a window down to the floor). Their tops stand 4 mm
+    // proud of the hole's bottom (not in the same plane as the wall's reveal, which would flicker).
+    if (o.sill > 0.05) grp.add(box(W + 0.06, 0.025, T / 2 + 0.04, frameM, 0, -0.0125 + 0.004, zIn * (T / 4 + 0.02)))
+    if (o.sill > 0.05) grp.add(box(W + 0.04, 0.03, T / 2 + 0.05, ALU, 0, -0.015 + 0.004, -zIn * (T / 4 + 0.025)))
   }
   if (o.kind === 'french-window') grp.add(box(W, 0.02, T + 0.004, frameM, 0, 0.01, 0))
   return grp
@@ -512,8 +511,10 @@ function windowPiece(o: Opening, g: WallGeom, len: number, H: number, cap0: bool
   const pane = new Mesh(sheet, GLASS)
   pane.position.set(0, (H - jamb) / 2, 0)
   grp.add(pane)
-  grp.add(box(L, 0.025, T / 2 + 0.04, frameM, 0, -0.0125 + 0.004, zIn * (T / 4 + 0.02)))
-  grp.add(box(L, 0.03, T / 2 + 0.05, ALU, 0, -0.015 + 0.004, -zIn * (T / 4 + 0.025)))
+  if (o.sill > 0.05) {
+    grp.add(box(L, 0.025, T / 2 + 0.04, frameM, 0, -0.0125 + 0.004, zIn * (T / 4 + 0.02)))
+    grp.add(box(L, 0.03, T / 2 + 0.05, ALU, 0, -0.015 + 0.004, -zIn * (T / 4 + 0.025)))
+  }
   return grp
 }
 

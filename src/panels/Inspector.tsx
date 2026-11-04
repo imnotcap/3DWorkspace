@@ -350,6 +350,17 @@ function ProjectSummary() {
           </Button>
         )}
       </div>
+      {project.underlay && (
+        <div className="space-y-2 border-t border-line pt-2.5">
+          <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Imported drawing</span>
+          <Field label="Show">
+            <input type="range" min={0} max={1} step={0.05} value={project.underlay.opacity} onChange={(e) => useWorkspace.getState().setUnderlay({ ...project.underlay!, opacity: Number(e.target.value) })} className="w-full accent-[#4c8dff]" />
+          </Field>
+          <Button variant="ghost" className="ml-[100px] h-6 gap-1 px-2" onClick={() => useWorkspace.getState().setUnderlay(null)}>
+            <Trash2 className="size-3" /> Remove drawing
+          </Button>
+        </div>
+      )}
       <div className="space-y-2 border-t border-line pt-2.5">
         <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Walkthrough</span>
         <TourSettings />

@@ -39,6 +39,7 @@ interface StoredState {
     id: string
     name: string
     objects: StoredObject[]
+    underlay?: { x: number; y: number; w: number; h: number; opacity: number } | null
     camera?: CameraPose | null
     animation?: Animation
     plan?: PlanData
@@ -85,6 +86,7 @@ async function save() {
       name: p.name,
       camera: p.camera,
       animation: p.animation,
+      underlay: p.underlay ? (blobs.push([`underlay-${p.id}`, p.underlay.blob]), { x: p.underlay.x, y: p.underlay.y, w: p.underlay.w, h: p.underlay.h, opacity: p.underlay.opacity }) : null,
       plan: { levels: p.levels, walls: p.walls, openings: p.openings, rooms: p.rooms, tour: p.tour },
       activeLevelId: p.activeLevelId,
       useTour: p.useTour,
@@ -156,6 +158,14 @@ async function load(): Promise<boolean> {
       // A part whose model is gone (a missing blob) moves to the top level instead of vanishing.
       const present = new Set(objects.map((o) => o.id))
       for (const o of objects) if (o.parentId && !present.has(o.parentId)) o.parentId = null
+      let underlay: Project['underlay'] = null
+      if (p.underlay) {
+        const blob = await get(`underlay-${p.id}`)
+        if (blob) {
+          written.add(`underlay-${p.id}`)
+          underlay = { ...p.underlay, blob, url: URL.createObjectURL(blob) }
+        }
+      }
       // Projects saved before levels existed get one floor.
       const levels = p.plan?.levels?.length ? p.plan.levels : [newLevel('Ground floor')]
       return {
@@ -169,6 +179,7 @@ async function load(): Promise<boolean> {
         tour: { ...DEFAULT_TOUR, ...p.plan?.tour },
         useTour: !!p.useTour,
         objects,
+        underlay,
         camera: p.camera ?? null,
         animation: { ...DEFAULT_ANIMATION, ...p.animation },
       }
