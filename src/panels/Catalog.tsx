@@ -1,5 +1,5 @@
 import { Search, Sparkles } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CATALOG, CATEGORIES, type CatalogItem, type Category } from '@/furniture/catalog'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/store/workspace'
@@ -35,17 +35,28 @@ function Footprint({ item }: { item: CatalogItem }) {
 /** A rendered picture of the piece (made in the background); its outline until it's ready. */
 function Preview({ item }: { item: CatalogItem }) {
   const [url, setUrl] = useState<string | null>(null)
+  const [seen, setSeen] = useState(false)
+  const box = useRef<HTMLSpanElement>(null)
+  // Lazy: a piece is only rendered once its card scrolls into view.
   useEffect(() => {
+    const el = box.current
+    if (!el || seen) return
+    const io = new IntersectionObserver(([e]) => e.isIntersecting && (setSeen(true), io.disconnect()), { rootMargin: '120px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [seen])
+  useEffect(() => {
+    if (!seen) return
     let live = true
     void import('@/viewport/thumbnails')
       .then((m) => m.thumbnail(item))
       .then((u) => live && setUrl(u))
       .catch(() => {})
     return () => void (live = false)
-  }, [item])
+  }, [item, seen])
   if (!url)
     return (
-      <span className="grid h-20 w-full place-items-center text-dim group-hover:text-fg">
+      <span ref={box} className="grid h-20 w-full place-items-center text-dim group-hover:text-fg">
         <Footprint item={item} />
       </span>
     )

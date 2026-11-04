@@ -422,7 +422,7 @@ export const useWorkspace = create<WorkspaceState>()(
         engine: 'pathtrace',
         samples: 256,
         videoSamples: 64,
-        viewportSamples: 1024,
+        viewportSamples: 256,
         bounces: 6,
         denoise: true,
         ambience: 'day',
@@ -747,7 +747,7 @@ export const useWorkspace = create<WorkspaceState>()(
       partialize: (s) => ({
         // The OpenAI key is written only if you chose "Remember on this device".
         settings: s.settings.rememberKeys ? s.settings : { ...s.settings, openaiKey: '' },
-        shading: s.shading,
+        shading: s.shading === 'rendered' ? 'material' : s.shading,
         view: s.view,
       }),
     },
