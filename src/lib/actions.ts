@@ -186,6 +186,15 @@ export const actions = {
     })
   },
 
+  /** A part leaves its model and becomes a standalone object, staying exactly where it is. */
+  unparentSelected() {
+    const s = ws()
+    const obj = project().objects.find((o) => o.id === s.selectedId)
+    if (!obj?.parentId) return
+    const transform = viewport.relativeTransform(obj.id, null)
+    if (transform) s.reparent(obj.id, null, transform)
+  },
+
   duplicateSelected() {
     const s = ws()
     if (s.selectedId) s.duplicateObject(s.selectedId)

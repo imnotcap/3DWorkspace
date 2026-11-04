@@ -1,5 +1,5 @@
 import type { ViewTag } from '@/generation/types'
-import { DEFAULT_ANIMATION, useWorkspace, type Animation, type CameraPose, type Primitive, type Interpolation, type ObjectKey, type RealSize, type MaterialOverride, type Project, type SceneObject, type ShadeMode, type Transform } from '@/store/workspace'
+import { DEFAULT_ANIMATION, DEFAULT_PROMPT, useWorkspace, type Animation, type CameraPose, type Primitive, type Interpolation, type ObjectKey, type PartPrompt, type RealSize, type MaterialOverride, type Project, type SceneObject, type Segmentation, type ShadeMode, type Transform } from '@/store/workspace'
 
 /**
  * Projects, meshes and input photos survive reloads via IndexedDB.
@@ -13,6 +13,10 @@ const VERSION = 1
 interface StoredObject {
   id: string
   name: string
+  parentId?: string | null
+  isGroup?: boolean
+  keepOrigin?: boolean
+  stats?: SceneObject['stats']
   source: string
   visible: boolean
   renderable: boolean
@@ -33,9 +37,22 @@ interface StoredImage {
   type: string
   view: ViewTag
 }
+/** Segment masks are stored as blobs under the segment's id. */
+type StoredSegmentation = Omit<Segmentation, 'segments'> & { segments: Omit<Segmentation['segments'][number], 'mask'>[] }
 interface StoredState {
   activeProjectId: string
-  projects: { id: string; name: string; objects: StoredObject[]; images: StoredImage[]; camera?: CameraPose | null; realSize?: RealSize | null; autoAngles?: { azimuth: number; polar: number } | null; animation?: Animation }[]
+  projects: {
+    id: string
+    name: string
+    objects: StoredObject[]
+    images: StoredImage[]
+    camera?: CameraPose | null
+    realSize?: RealSize | null
+    autoAngles?: { azimuth: number; polar: number } | null
+    animation?: Animation
+    prompt?: PartPrompt
+    segmentation?: StoredSegmentation | null
+  }[]
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null
@@ -78,9 +95,38 @@ async function save() {
       realSize: p.realSize,
       autoAngles: p.autoAngles,
       animation: p.animation,
+      prompt: p.prompt,
+      segmentation: p.segmentation && {
+        ...p.segmentation,
+        segments: p.segmentation.segments.map(({ mask, ...g }) => {
+          blobs.push([g.id, mask])
+          return g
+        }),
+      },
       objects: p.objects.map((o) => {
         if (o.blob) blobs.push([o.id, o.blob])
-        return { primitive: o.primitive, id: o.id, name: o.name, source: o.source, visible: o.visible, renderable: o.renderable, transform: o.transform, shade: o.shade, material: o.material, fitSize: o.fitSize ?? null, keys: o.keys, interpolation: o.interpolation, surfaces: o.surfaces, exact: o.exact, spec: o.spec }
+        return {
+          primitive: o.primitive,
+          id: o.id,
+          name: o.name,
+          parentId: o.parentId ?? null,
+          isGroup: o.isGroup,
+          keepOrigin: o.keepOrigin,
+          // A group's size comes from its parts when it was made; keep it for the Size field.
+          stats: o.isGroup ? o.stats : undefined,
+          source: o.source,
+          visible: o.visible,
+          renderable: o.renderable,
+          transform: o.transform,
+          shade: o.shade,
+          material: o.material,
+          fitSize: o.fitSize ?? null,
+          keys: o.keys,
+          interpolation: o.interpolation,
+          surfaces: o.surfaces,
+          exact: o.exact,
+          spec: o.spec,
+        }
       }),
       images: p.images.map((i) => {
         blobs.push([i.id, i.file])
@@ -113,14 +159,18 @@ async function load(): Promise<boolean> {
       const objects = (
         await Promise.all(
           p.objects.map(async (o): Promise<SceneObject | null> => {
-            if (o.primitive) return { ...o, shade: o.shade ?? 'original', material: o.material ?? null }
+            if (o.isGroup) return { ...o, shade: o.shade ?? 'original', material: o.material ?? null }
+            if (o.primitive) return { ...o, stats: undefined, shade: o.shade ?? 'original', material: o.material ?? null }
             const blob = await get(o.id)
             if (!blob) return null
             written.add(o.id)
-            return { ...o, shade: o.shade ?? 'auto', material: o.material ?? null, blob, url: URL.createObjectURL(blob) }
+            return { ...o, stats: undefined, shade: o.shade ?? 'auto', material: o.material ?? null, blob, url: URL.createObjectURL(blob) }
           }),
         )
       ).filter((o): o is SceneObject => !!o)
+      // A part whose model is gone (a missing blob) moves to the top level instead of vanishing.
+      const present = new Set(objects.map((o) => o.id))
+      for (const o of objects) if (o.parentId && !present.has(o.parentId)) o.parentId = null
       // v1 used an 'auto' tag; it maps to front for the first image, detail for the rest.
       let hasFront = p.images.some((i) => i.view === 'front')
       const images = (
@@ -141,7 +191,36 @@ async function load(): Promise<boolean> {
           hasFront = true
           return { ...i, view }
         })
-      return { id: p.id, name: p.name, objects, images, camera: p.camera ?? null, realSize: p.realSize ?? null, autoAngles: p.autoAngles ?? null, animation: { ...DEFAULT_ANIMATION, ...p.animation } }
+      let segmentation: Segmentation | null = null
+      if (p.segmentation && images.some((i) => i.id === p.segmentation!.imageId && i.view === 'front')) {
+        const segments = await Promise.all(
+          p.segmentation.segments.map(async (g) => {
+            const mask = await get(g.id)
+            if (mask) written.add(g.id)
+            return mask ? { ...g, mask } : null
+          }),
+        )
+        // All or nothing: a partial set of masks would leave holes in the model.
+        if (segments.every((g) => g))
+          segmentation = {
+            ...p.segmentation,
+            prompt: p.segmentation.prompt ?? { object: '', parts: '', auto: true },
+            edited: p.segmentation.edited ?? true,
+            segments: segments as Segmentation['segments'],
+          }
+      }
+      return {
+        id: p.id,
+        name: p.name,
+        objects,
+        images,
+        camera: p.camera ?? null,
+        realSize: p.realSize ?? null,
+        autoAngles: p.autoAngles ?? null,
+        animation: { ...DEFAULT_ANIMATION, ...p.animation },
+        prompt: { ...DEFAULT_PROMPT, ...p.prompt },
+        segmentation,
+      }
     }),
   )
 

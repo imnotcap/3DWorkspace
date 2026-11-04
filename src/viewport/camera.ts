@@ -1,4 +1,4 @@
-import { Box3, MathUtils, PerspectiveCamera, Sphere, Spherical, Vector3, type Object3D } from 'three'
+import { Box3, MathUtils, PerspectiveCamera, Sphere, Spherical, Vector3, type Mesh, type Object3D } from 'three'
 import type { Animation, CameraPose, Vec3 } from '@/store/workspace'
 export { frameRect } from '@/lib/frame'
 
@@ -98,9 +98,18 @@ export function orbitRadius(box: Box3, pose: CameraPose, aspect: number) {
   return r
 }
 
+/** Bounds of what you can see: hidden objects and parts, and selection boxes, don't count. */
+export function visibleBox(o: Object3D, box = new Box3()) {
+  if (!o.visible || o.name === '__selection') return box
+  if ((o as Mesh).isMesh) box.expandByObject(o, false)
+  else o.children.forEach((c) => visibleBox(c, box))
+  return box
+}
+
+/** Union over top-level objects (parts are inside their model, so they count once). */
 export function sceneBox(objects: Object3D[]) {
   const box = new Box3()
-  objects.forEach((o) => o.visible && box.expandByObject(o))
+  objects.forEach((o) => !o.userData.parentId && visibleBox(o, box))
   if (box.isEmpty()) box.set(new Vector3(-1, 0, -1), new Vector3(1, 2, 1))
   return box
 }

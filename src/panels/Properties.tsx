@@ -2,89 +2,33 @@ import { Diamond, Lock, Unlock } from 'lucide-react'
 import { objectTransformAt } from '@/lib/anim'
 import { useRef, useState } from 'react'
 import ScrubField from '@/components/reactbits/ScrubField'
-import { SPACE_PRESETS, findPreset } from '@/generation/spaces'
-import type { ProviderId, Quality } from '@/generation/types'
+import type { Quality } from '@/generation/types'
 import { actions } from '@/lib/actions'
-import { scaleForSize, useActiveProject, useWorkspace, type PropertyTab, type RealSize, type SceneObject, type ShadeMode, type Vec3 } from '@/store/workspace'
+import { ancestorIds, scaleForSize, useActiveProject, useWorkspace, type LevelMode, type PropertyTab, type RealSize, type SceneObject, type ShadeMode, type Vec3 } from '@/store/workspace'
 import { PRIMITIVES, SHAPE_FIELDS, restingHeight } from '@/lib/primitives'
 import { MaterialsSection } from './MaterialsSection'
+import { viewport } from '@/viewport/bridge'
 import { Button, Field, Select, Slider, Toggle, inputCls } from '@/ui/primitives'
-
-const CUSTOM = '__custom'
 
 function GenerateTab() {
   const s = useWorkspace((st) => st.settings)
   const update = useWorkspace((st) => st.updateSettings)
-  const preset = findPreset(s.spaceId)
 
   return (
     <div className="space-y-2.5 p-3">
-      <Field label="Backend">
-        <Select<ProviderId>
-          value={s.providerId}
-          onChange={(providerId) => update({ providerId })}
-          options={[
-            { value: 'hf-space', label: 'Hugging Face Space' },
-            { value: 'local-worker', label: 'Local GPU worker' },
-            { value: 'claude-parts', label: 'Parts · Claude (exact)' },
-            { value: 'photogrammetry', label: 'Photogrammetry · exact' },
-          ]}
-        />
+      <Field label="Models">
+        <span className="text-xs text-fg">Meta SAM 3 + SAM 3D Objects</span>
       </Field>
-
-      {s.providerId === 'hf-space' ? (
-        <>
-          <Field label="Model" hint={preset?.note ?? 'Any Gradio Space that outputs a .glb.'}>
-            <Select
-              value={preset ? s.spaceId : CUSTOM}
-              onChange={(v) => update({ spaceId: v === CUSTOM ? '' : v })}
-              options={[...SPACE_PRESETS.map((p) => ({ value: p.id, label: p.label })), { value: CUSTOM, label: 'Custom Space…' }]}
-            />
-          </Field>
-          {!preset && (
-            <Field label="Space id">
-              <input className={inputCls} placeholder="user/space" value={s.spaceId} onChange={(e) => update({ spaceId: e.target.value.trim() })} />
-            </Field>
-          )}
-          <Field label="HF token" hint="Optional. Raises your free GPU quota. Stored only in this browser.">
-            <input className={inputCls} type="password" placeholder="hf_…" value={s.hfToken} onChange={(e) => update({ hfToken: e.target.value })} autoComplete="off" />
-          </Field>
-        </>
-      ) : s.providerId === 'claude-parts' ? (
-        <>
-          <Field label="API key" hint="From console.anthropic.com (your team's org). Stored only in this browser; sent only to api.anthropic.com.">
-            <input className={inputCls} type="password" placeholder="sk-ant-…" value={s.anthropicKey} onChange={(e) => update({ anthropicKey: e.target.value })} autoComplete="off" />
-          </Field>
-          <Field label="Model">
-            <Select
-              value={s.claudeModel}
-              onChange={(claudeModel) => update({ claudeModel })}
-              options={[
-                { value: 'claude-opus-5-5', label: 'Claude Opus 5.5 · most accurate' },
-                { value: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 · faster, half the price' },
-              ]}
-            />
-          </Field>
-          <Field label="Self-check" hint="Renders the result from the photo's angle and has Claude correct it. About twice the cost, noticeably more accurate.">
-            <Toggle checked={s.claudeSelfCheck} onChange={(claudeSelfCheck) => update({ claudeSelfCheck })} />
-          </Field>
-          <p className="ml-[100px] text-2xs leading-snug text-faint">
-            Builds hard-surface products (furniture, cases, appliances) from exact parts at real size, with materials. Typically ≈$0.20–0.80 per model on Opus 5.5. If Claude declines a request, it is retried on a fallback model automatically.
-          </p>
-        </>
-      ) : s.providerId === 'photogrammetry' ? (
-        <Field label="Worker URL" hint="Measures the real object from 30–80 photos taken all around it. Runs on any computer (CPU). Set Real size for exact scale.">
-          <input className={inputCls} value={s.photogrammetryUrl} onChange={(e) => update({ photogrammetryUrl: e.target.value })} />
-        </Field>
-      ) : (
-        <Field label="Worker URL" hint="Run worker/ with Docker on a machine with an NVIDIA GPU.">
-          <input className={inputCls} value={s.workerUrl} onChange={(e) => update({ workerUrl: e.target.value })} />
-        </Field>
-      )}
+      <Field label="Server" hint="Your SAM 3D server: a URL (run worker/sam3d with Docker on an NVIDIA GPU, 32 GB+), or the id of a Hugging Face Space running it.">
+        <input className={inputCls} placeholder="http://localhost:7860 or user/space" value={s.sam3dServer} onChange={(e) => update({ sam3dServer: e.target.value.trim() })} />
+      </Field>
+      <Field label="HF token" hint="Only for a private Hugging Face Space. Stored only in this browser.">
+        <input className={inputCls} type="password" placeholder="hf_…" value={s.hfToken} onChange={(e) => update({ hfToken: e.target.value })} autoComplete="off" />
+      </Field>
 
       <div className="h-px bg-line" />
 
-      <Field label="Quality">
+      <Field label="Quality" hint={QUALITY_HINT[s.quality]}>
         <Select<Quality>
           value={s.quality}
           onChange={(quality) => update({ quality })}
@@ -96,10 +40,20 @@ function GenerateTab() {
           ]}
         />
       </Field>
-      <Field label="Remove BG">
-        <Toggle checked={s.removeBackground} onChange={(removeBackground) => update({ removeBackground })} />
+      <Field label="Find parts" hint="When you don't name the parts: on = SAM 3 finds them, off = the whole object is one part.">
+        <Toggle checked={s.autoParts} onChange={(autoParts) => update({ autoParts })} />
       </Field>
-      <Field label="Seed" hint="Empty = random">
+      <Field label="Stand upright" hint={s.level === 'part' ? "By the largest part's own up axis: undoes the camera's tilt." : "By the photo's horizon: use if the photo was taken level."}>
+        <Select<LevelMode>
+          value={s.level}
+          onChange={(level) => update({ level })}
+          options={[
+            { value: 'part', label: 'Main part' },
+            { value: 'camera', label: 'Photo horizon' },
+          ]}
+        />
+      </Field>
+      <Field label="Seed" hint="Empty = random. The same seed and photo give the same parts.">
         <input
           className={inputCls}
           inputMode="numeric"
@@ -107,7 +61,7 @@ function GenerateTab() {
           value={s.seed ?? ''}
           onChange={(e) => {
             const n = parseInt(e.target.value, 10)
-            update({ seed: Number.isFinite(n) ? n : null })
+            update({ seed: Number.isFinite(n) && n >= 0 ? n : null })
           }}
         />
       </Field>
@@ -118,12 +72,19 @@ function GenerateTab() {
   )
 }
 
+const QUALITY_HINT: Record<Quality, string> = {
+  draft: 'Fewer sampling steps, no pose refinement. Quick look.',
+  standard: "Meta's default steps, pose refined against the photo's depth. Vertex colours.",
+  high: 'More steps, refined pose, baked 2K texture.',
+  ultra: 'Most steps, refined pose, baked 4K texture, least simplification. Slow.',
+}
+
 /** This site has no keys of its own: every visitor brings theirs, kept in their browser only. */
 function KeysSection() {
   const s = useWorkspace((st) => st.settings)
   const update = useWorkspace((st) => st.updateSettings)
   const forgetKeys = useWorkspace((st) => st.forgetKeys)
-  const hasKeys = !!(s.hfToken || s.anthropicKey)
+  const hasKeys = !!s.hfToken
   return (
     <>
       <Field
@@ -140,7 +101,7 @@ function KeysSection() {
         </label>
       </Field>
       <p className="ml-[100px] text-2xs leading-snug text-faint">
-        This site has no API keys of its own. Your keys are sent only to the service they belong to (Hugging Face or Anthropic), never to this site, and aren't saved with projects or exports.
+        This site has no keys of its own. Your token is sent only to Hugging Face (when the server is a Space), never to this site, and isn't saved with projects or exports.
       </p>
       {hasKeys && (
         <Button variant="ghost" className="ml-[100px] h-6 px-2" onClick={forgetKeys}>
@@ -225,8 +186,13 @@ function ObjectTab() {
   }
   const done = () => (editing.current = false)
 
+  const inModel = !!(obj.isGroup || obj.parentId)
+  const descendants = obj.isGroup ? project.objects.filter((o) => ancestorIds(project.objects, o.id).includes(obj.id)) : []
+  const triangles = obj.isGroup ? descendants.reduce((a, o) => a + (o.stats?.triangles ?? 0), 0) : obj.stats?.triangles
+
   return (
     <div className="space-y-2.5 p-3">
+      {inModel && <PartPicker obj={obj} />}
       <Field label="Name">
         <input className={inputCls} value={obj.name} onChange={(e) => updateObject(obj.id, { name: e.target.value })} />
       </Field>
@@ -267,19 +233,31 @@ function ObjectTab() {
         />
       )}
       <div className="h-px bg-line" />
-      <Field label="Shading">
-        <Segmented<ShadeMode>
-          value={obj.shade}
-          onChange={(shade) => commit('Shading', obj.id, { shade })}
-          options={[
-            { value: 'original', label: 'As made' },
-            { value: 'smooth', label: 'Smooth' },
-            { value: 'auto', label: 'Auto' },
-          ]}
-        />
-      </Field>
-      <MaterialsSection obj={obj} />
-      {obj.spec != null && <RefineSection obj={obj} />}
+      {obj.isGroup ? (
+        <GroupSection obj={obj} descendants={descendants} />
+      ) : (
+        <>
+          <Field label="Shading">
+            <Segmented<ShadeMode>
+              value={obj.shade}
+              onChange={(shade) => commit('Shading', obj.id, { shade })}
+              options={[
+                { value: 'original', label: 'As made' },
+                { value: 'smooth', label: 'Smooth' },
+                { value: 'auto', label: 'Auto' },
+              ]}
+            />
+          </Field>
+          <MaterialsSection obj={obj} />
+        </>
+      )}
+      {obj.parentId && (
+        <Field label="Model" hint="Make this part a separate object, exactly where it is now.">
+          <Button className="h-6.5 px-2.5" onClick={actions.unparentSelected}>
+            Take out of model
+          </Button>
+        </Field>
+      )}
       {obj.spec != null && (
         <Field label="Parts" hint="Turn every part into its own object you can move, resize and recolour.">
           <Button className="h-6.5 px-2.5" onClick={actions.separateSelected}>
@@ -292,7 +270,7 @@ function ObjectTab() {
         <span className="block truncate text-xs text-fg">{obj.source}</span>
       </Field>
       <Field label="Triangles">
-        <span className="font-mono text-2xs tabular text-fg">{obj.stats?.triangles.toLocaleString('en-US') ?? '—'}</span>
+        <span className="font-mono text-2xs tabular text-fg">{triangles?.toLocaleString('en-US') ?? '—'}</span>
       </Field>
       <div className="flex gap-1.5 pt-1">
         <Button className="flex-1" onClick={actions.exportSelected}>
@@ -303,6 +281,70 @@ function ObjectTab() {
         </Button>
       </div>
     </div>
+  )
+}
+
+/**
+ * The model's parts as a dropdown: pick the whole model, a folder (all legs) or one part
+ * to move and edit it. Same as clicking it in the outliner.
+ */
+function PartPicker({ obj }: { obj: SceneObject }) {
+  const project = useActiveProject()
+  const select = useWorkspace((s) => s.select)
+  const rootId = [obj.id, ...ancestorIds(project.objects, obj.id)].at(-1)!
+  const options: { value: string; label: string }[] = []
+  const walk = (id: string, depth: number) => {
+    const o = project.objects.find((x) => x.id === id)
+    if (!o) return
+    const indent = '\u2002\u2002'.repeat(depth)
+    options.push({ value: o.id, label: depth === 0 ? `${o.name} · whole model` : `${indent}${o.isGroup ? '▸ ' : ''}${o.name}` })
+    project.objects.filter((c) => c.parentId === id).forEach((c) => walk(c.id, depth + 1))
+  }
+  walk(rootId, 0)
+  return (
+    <Field label="Part" hint={obj.id === rootId ? 'Pick a part to move or edit it on its own. Clicking a part in the viewport does the same.' : undefined}>
+      <Select value={obj.id} onChange={(id) => select(id)} options={options} />
+    </Field>
+  )
+}
+
+/** A model or folder: its parts at a glance, with visibility. */
+function GroupSection({ obj, descendants }: { obj: SceneObject; descendants: SceneObject[] }) {
+  const { select, updateObject } = useWorkspace.getState()
+  const parts = descendants.filter((o) => !o.isGroup)
+  const hidden = parts.filter((o) => !o.visible).length
+  return (
+    <>
+      <Field label="Parts" hint={hidden ? `${hidden} hidden` : undefined}>
+        <div className="flex flex-wrap gap-1">
+          {descendants
+            .filter((o) => o.parentId === obj.id)
+            .map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                onClick={() => select(o.id)}
+                className={`h-5.5 rounded border border-line-strong px-1.5 text-2xs hover:border-dim hover:text-fg ${o.visible ? 'text-dim' : 'text-faint line-through'}`}
+              >
+                {o.isGroup ? '▸ ' : ''}
+                {o.name}
+              </button>
+            ))}
+        </div>
+      </Field>
+      {hidden > 0 && (
+        <Button
+          variant="ghost"
+          className="ml-[100px] h-6 px-2"
+          onClick={() => {
+            descendants.forEach((o) => !o.visible && updateObject(o.id, { visible: true }))
+            viewport.invalidate()
+          }}
+        >
+          Show all parts
+        </Button>
+      )}
+    </>
   )
 }
 
@@ -503,51 +545,6 @@ function ShapeSection({ obj }: { obj: SceneObject }) {
         </Field>
       ))}
       <div className="h-px bg-line" />
-    </>
-  )
-}
-
-/** Claude parts objects: describe a change in words, Claude edits the parts. */
-function RefineSection({ obj }: { obj: SceneObject }) {
-  const [text, setText] = useState('')
-  const running = useWorkspace((s) => s.job.status === 'running')
-  const spec = obj.spec as { parts?: unknown[]; assumptions?: string[] }
-  const [showAssumptions, setShowAssumptions] = useState(false)
-  const submit = async () => {
-    const { refineObject } = await import('@/generation/run')
-    await refineObject(obj.id, text)
-    setText('')
-  }
-  return (
-    <>
-      <div className="h-px bg-line" />
-      <Field label="Refine" hint={`${spec.parts?.length ?? 0} parts. Describe what's wrong, e.g. "legs are square 6×6 cm, the top is 2.5 cm thick".`}>
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => (e.metaKey || e.ctrlKey) && e.key === 'Enter' && text.trim() && !running && submit()}
-          rows={3}
-          placeholder="What should change?"
-          className={`${inputCls} h-auto resize-none py-1.5 leading-snug`}
-        />
-      </Field>
-      <div className="ml-[100px] flex items-center gap-1.5">
-        <Button variant="primary" className="h-6.5 whitespace-nowrap px-3" disabled={!text.trim() || running} onClick={submit}>
-          {running ? 'Working…' : 'Refine with Claude'}
-        </Button>
-        {!!spec.assumptions?.length && (
-          <Button variant="ghost" className="h-6.5 px-2" onClick={() => setShowAssumptions(!showAssumptions)}>
-            Assumptions ({spec.assumptions.length})
-          </Button>
-        )}
-      </div>
-      {showAssumptions && (
-        <ul className="ml-[100px] list-disc space-y-0.5 pl-4 text-2xs leading-snug text-dim">
-          {spec.assumptions!.map((a, i) => (
-            <li key={i}>{a}</li>
-          ))}
-        </ul>
-      )}
     </>
   )
 }

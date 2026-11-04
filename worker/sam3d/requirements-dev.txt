@@ -1,0 +1,7 @@
+# Mock mode (MOCK=1) and tests: no GPU, no model weights.
+gradio>=5.49,<6
+numpy
+scipy
+pillow
+trimesh
+pytest

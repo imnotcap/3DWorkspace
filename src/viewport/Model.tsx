@@ -1,10 +1,10 @@
 import { useGLTF } from '@react-three/drei'
 import { invalidate, type ThreeEvent } from '@react-three/fiber'
 import { Component, memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
-import { Box3, Box3Helper, BufferGeometry, Color, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, Vector3, type Material, type Object3D } from 'three'
+import { Box3, Box3Helper, BufferGeometry, Color, Group, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, Vector3, type BufferAttribute, type Material, type Object3D } from 'three'
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh'
 import { objectTransformAt } from '@/lib/anim'
-import { scaleForSize, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
+import { activeProject, ancestorIds, scaleForSize, subtreeIds, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
 import { primitiveGroup } from '@/generation/parts/build'
 import { reshade, surfaceFor } from './shading'
@@ -27,16 +27,27 @@ function materialFor(mode: ShadingMode, original: Material | Material[]) {
   return original
 }
 
+/** Children of each object (key null = top level), so models render their parts inside them. */
+export type Tree = Map<string | null, SceneObject[]>
+
 interface Props {
   obj: SceneObject
   selected: boolean
   shading: ShadingMode
 }
 
+interface TreeProps {
+  obj: SceneObject
+  selectedId: string | null
+  shading: ShadingMode
+  tree: Tree
+}
+
 /** Loaded/generated meshes: a GLB, fitted to FIT_SIZE unless built at real size, resting on the grid. */
 function GltfModel(props: Props) {
   const gltf = useGLTF(props.obj.url!, true, true)
-  return <ObjectView {...props} source={gltf.scene} clone fit={!props.obj.exact} recenter />
+  // SAM 3D parts keep their GLB coordinates: their transforms were computed for exactly those.
+  return <ObjectView {...props} source={gltf.scene} clone fit={!props.obj.exact} recenter={!props.obj.keepOrigin} />
 }
 
 /** Objects you model yourself: geometry straight from parameters, origin at the shape's centre. */
@@ -229,15 +240,137 @@ function ObjectView({ obj, selected, shading, source, clone, fit, recenter }: Pr
     return () => void viewport.objects.delete(obj.id)
   }, [obj.id])
 
-  const onClick = (e: ThreeEvent<MouseEvent>) => {
-    if (e.delta > 4) return // was an orbit drag, not a click
-    e.stopPropagation()
-    useWorkspace.getState().select(obj.id)
+  return (
+    <group
+      ref={group}
+      name={obj.name}
+      visible={obj.visible}
+      userData={{ id: obj.id, renderable: obj.renderable, parentId: obj.parentId ?? null }}
+      onClick={(e) => pick(e, obj.id)}
+      onDoubleClick={(e) => pickExact(e, obj.id)}
+    >
+      <primitive object={root} />
+      <primitive object={helper} visible={selected} />
+    </group>
+  )
+}
+
+/**
+ * Clicking in the viewport, Figma-style: the first click on a model selects the whole model;
+ * clicking again goes one level deeper (folder, then part). Double-click goes straight to the part.
+ */
+function pick(e: ThreeEvent<MouseEvent>, id: string) {
+  if (e.delta > 4) return // was an orbit drag, not a click
+  e.stopPropagation()
+  const s = useWorkspace.getState()
+  const objects = activeProject(s).objects
+  const chain = [id, ...ancestorIds(objects, id)] // part → … → model
+  const at = s.selectedId ? chain.indexOf(s.selectedId) : -1
+  if (at > 0) return s.select(chain[at - 1])
+  if (at === 0) return
+  // Something else in the same model is selected: switch straight to the clicked part.
+  const inSameModel = !!s.selectedId && subtreeIds(objects, chain.at(-1)!).includes(s.selectedId)
+  s.select(inSameModel ? id : chain.at(-1)!)
+}
+
+function pickExact(e: ThreeEvent<MouseEvent>, id: string) {
+  e.stopPropagation()
+  useWorkspace.getState().select(id)
+}
+
+/** Exact bounds of everything visible under `root`, in `root`'s own coordinates. */
+function localBounds(root: Object3D, box = new Box3()) {
+  root.updateWorldMatrix(true, true)
+  const inv = new Matrix4().copy(root.matrixWorld).invert()
+  const m = new Matrix4()
+  const v = new Vector3()
+  const walk = (o: Object3D) => {
+    if (!o.visible || o.name === '__selection') return
+    const mesh = o as Mesh
+    if (mesh.isMesh) {
+      m.multiplyMatrices(inv, mesh.matrixWorld)
+      const pos = mesh.geometry.attributes.position as BufferAttribute
+      for (let i = 0; i < pos.count; i++) box.expandByPoint(v.fromBufferAttribute(pos, i).applyMatrix4(m))
+    }
+    o.children.forEach(walk)
   }
+  root.children.forEach(walk)
+  return box
+}
+
+/** A model or folder: no geometry of its own, its parts render inside it and move with it. */
+function GroupView({ obj, selectedId, shading, tree }: TreeProps) {
+  const group = useRef<Group>(null)
+  const kids = tree.get(obj.id) ?? []
+  const selected = obj.id === selectedId
+  const box = useMemo(() => new Box3(), [])
+  const helper = useMemo(() => {
+    const h = new Box3Helper(box, SELECT_COLOR)
+    h.name = '__selection'
+    const mat = h.material as Material
+    mat.depthTest = false
+    mat.transparent = true
+    mat.opacity = 0.45
+    h.renderOrder = 999
+    return h
+  }, [box])
+
+  const keyed = !!obj.keys?.length
+  const frame = useWorkspace((s) => (keyed ? s.frame : 0))
+  useLayoutEffect(() => {
+    const g = group.current
+    if (!g) return
+    const t = objectTransformAt(obj, frame)
+    g.position.fromArray(t.position)
+    g.rotation.set(...t.rotation)
+    g.scale.fromArray(t.scale)
+    invalidate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [obj.transform, obj.keys, obj.interpolation, frame])
+
+  useLayoutEffect(() => {
+    const g = group.current
+    if (!g) return
+    viewport.objects.set(obj.id, g)
+    return () => void viewport.objects.delete(obj.id)
+  }, [obj.id])
+
+  // The group's size (for the Size field and the selection box) follows its parts:
+  // recomputed when a part loads, moves, appears or disappears.
+  const objects = useWorkspace((s) => activeProject(s).objects)
+  const signature = useMemo(() => {
+    const ids = subtreeIds(objects, obj.id).slice(1)
+    const byId = new Map(objects.map((o) => [o.id, o]))
+    return ids.map((id) => {
+      const o = byId.get(id)!
+      return `${id}:${o.visible}:${o.isGroup ? '' : o.stats ? 1 : 0}:${o.transform.position}:${o.transform.rotation}:${o.transform.scale}`
+    }).join('|')
+  }, [objects, obj.id])
+  useEffect(() => {
+    const g = group.current
+    if (!g) return
+    box.makeEmpty()
+    localBounds(g, box)
+    if (box.isEmpty()) return
+    const size = box.getSize(new Vector3()).toArray() as Vec3
+    const st = useWorkspace.getState()
+    const current = activeProject(st).objects.find((o) => o.id === obj.id)
+    const old = current?.stats?.size
+    if (!old || old.some((v, i) => Math.abs(v - size[i]) > 1e-6)) st.updateObject(obj.id, { stats: { vertices: 0, triangles: 0, meshes: 0, size } })
+    invalidate()
+  }, [signature, obj.id, box])
 
   return (
-    <group ref={group} name={obj.name} visible={obj.visible} userData={{ id: obj.id, renderable: obj.renderable }} onClick={onClick}>
-      <primitive object={root} />
+    <group
+      ref={group}
+      name={obj.name}
+      visible={obj.visible}
+      userData={{ id: obj.id, renderable: obj.renderable, parentId: obj.parentId ?? null, isGroup: true }}
+      onDoubleClick={(e) => pickExact(e, obj.id)}
+    >
+      {kids.map((k) => (
+        <Model key={k.id} obj={k} selectedId={selectedId} shading={shading} tree={tree} />
+      ))}
       <primitive object={helper} visible={selected} />
     </group>
   )
@@ -259,10 +392,12 @@ class ModelBoundary extends Component<{ id: string; children: ReactNode }, { fai
 }
 
 /** Each model suspends on its own, so loading one never blanks the others. */
-export const Model = memo(function Model(props: Props) {
+export const Model = memo(function Model({ obj, selectedId, shading, tree }: TreeProps) {
+  if (obj.isGroup) return <GroupView obj={obj} selectedId={selectedId} shading={shading} tree={tree} />
+  const props = { obj, selected: obj.id === selectedId, shading }
   return (
-    <ModelBoundary id={props.obj.id}>
-      <Suspense fallback={null}>{props.obj.primitive ? <PrimitiveModel {...props} /> : <GltfModel {...props} />}</Suspense>
+    <ModelBoundary id={obj.id}>
+      <Suspense fallback={null}>{obj.primitive ? <PrimitiveModel {...props} /> : obj.url ? <GltfModel {...props} /> : null}</Suspense>
     </ModelBoundary>
   )
 })
