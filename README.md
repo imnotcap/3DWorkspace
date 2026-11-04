@@ -19,12 +19,14 @@ The workspace shows the **plan** (2D), the **3D view**, or both side by side (**
 | Select | V | Click walls, doors, windows, rooms and furniture. Drag a wall to move it (joined walls follow), drag its end points, drag doors and windows along their wall, drag furniture (it snaps back-first to walls; Alt moves freely) and rotate it with its handle. |
 | Wall | W | Click corner to corner. Snaps to wall ends, onto walls (T-joints), to 15° angles, to the 5 cm grid and into line with other corners. Closing the loop or ending on a wall finishes; Esc or right-click stops. |
 | Room | M | Drag a rectangle: four walls (sides that already have a wall are skipped). |
+| Curve | A | Click a corner, then another corner, pull the curve out and click: a curved wall. Between two corners of the same wall it bends that wall; across a corner (two walls) it replaces both with one smooth rounding. Snaps to a half circle; Shift is free. |
 | Door | D | Door, double door, sliding door or plain opening, placed on the wall under the pointer and opening towards the side you click on. |
 | Window | O | Window, wide window or French window. |
 | Tour | T | Click to lay out a walkthrough path; **Auto tour** makes one through every room. |
 
 - **Rooms are found automatically** from the walls: each enclosed space becomes a room with its floor area (inside the walls), name and finishes. Walls are mitred at corners and trimmed at T-joints; openings are cut exactly.
 - **Floors:** add storeys with **+** next to the level tabs. Each floor has its own ceiling height; the floor above sits on its slab. The level below shows faintly in the plan for alignment, and **Straight stairs** from the catalog cut the opening in the floor above.
+- **Curved walls:** select any wall and drag the round handle in its middle sideways to curve it (back to the line straightens it), or set **Curve** in the Inspector (Half circle, Straighten). Curved walls close rooms like straight ones and are smooth in 3D, with no facets. Windows placed on a curve follow it, as many as you like; doors sit flat across their opening.
 - **Resize in the plan:** select a door or window and drag either end to make it wider or narrower; select a piece of furniture (or any model) and drag the handle on any side to change its width or depth, the opposite side stays put. The 3D view follows live.
 - **Inspector** (right): wall length, thickness and height (lower = half wall); door and window type, size, sill, hinge side, swing side and how far it stands open; room name; floor height.
 - **Templates:** a furnished two-bedroom apartment, a two-storey house, or an empty plan.

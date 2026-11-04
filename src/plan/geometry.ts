@@ -92,6 +92,119 @@ export function distanceToPolygon(p: Vec2, poly: Vec2[]) {
   return d
 }
 
+// ───────────── curved walls ─────────────
+
+export interface Arc {
+  c: Vec2
+  r: number
+  /** Angle of a around the centre, and the signed sweep from a to b. */
+  a0: number
+  sweep: number
+  len: number
+}
+
+/** The circle a curved wall follows, or null for a straight wall. */
+export function arcOf(w: Pick<Wall, 'a' | 'b' | 'curve'>): Arc | null {
+  const s = w.curve ?? 0
+  const c = dist(w.a, w.b)
+  if (Math.abs(s) < 1e-3 || c < 1e-3) return null
+  const d = norm(sub(w.b, w.a))
+  const n = perp(d)
+  const m = mul(add(w.a, w.b), 0.5)
+  const r = (c * c) / 4 / (2 * Math.abs(s)) + Math.abs(s) / 2
+  const centre = add(m, mul(n, s - Math.sign(s) * r))
+  const a0 = Math.atan2(w.a[1] - centre[1], w.a[0] - centre[0])
+  const top = add(m, mul(n, s))
+  let half = Math.atan2(top[1] - centre[1], top[0] - centre[0]) - a0
+  while (half > Math.PI) half -= Math.PI * 2
+  while (half < -Math.PI) half += Math.PI * 2
+  return { c: centre, r, a0, sweep: half * 2, len: r * Math.abs(half * 2) }
+}
+
+/** Length along the wall (arc length for curved walls). */
+export const wallLength = (w: Pick<Wall, 'a' | 'b' | 'curve'>) => arcOf(w)?.len ?? dist(w.a, w.b)
+
+/** Point, direction (a → b) and left normal at `s` metres along the wall. */
+export function wallFrame(w: Pick<Wall, 'a' | 'b' | 'curve'>, s: number): { p: Vec2; d: Vec2; n: Vec2 } {
+  const arc = arcOf(w)
+  if (!arc) {
+    const d = norm(sub(w.b, w.a))
+    return { p: add(w.a, mul(d, s)), d, n: perp(d) }
+  }
+  const t = arc.a0 + arc.sweep * Math.max(0, Math.min(1, s / arc.len))
+  const p: Vec2 = [arc.c[0] + arc.r * Math.cos(t), arc.c[1] + arc.r * Math.sin(t)]
+  const k = Math.sign(arc.sweep)
+  const d: Vec2 = [-Math.sin(t) * k, Math.cos(t) * k]
+  return { p, d, n: perp(d) }
+}
+
+/** The closest point on a wall: how far along it, how far from it, and which side `p` is on. */
+export function projectOnWall(p: Vec2, w: Pick<Wall, 'a' | 'b' | 'curve'>): { s: number; dist: number; point: Vec2; side: 'left' | 'right'; len: number } {
+  const arc = arcOf(w)
+  if (!arc) {
+    const pr = projectOnSegment(p, w.a, w.b)
+    const L = dist(w.a, w.b)
+    const n = perp(norm(sub(w.b, w.a)))
+    return { s: pr.t * L, dist: pr.dist, point: pr.point, side: dot(sub(p, pr.point), n) >= 0 ? 'left' : 'right', len: L }
+  }
+  let t = Math.atan2(p[1] - arc.c[1], p[0] - arc.c[0]) - arc.a0
+  // Angle along the sweep's direction, wrapped into [0, 2π).
+  t *= Math.sign(arc.sweep)
+  t = ((t % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)
+  let f = t / Math.abs(arc.sweep)
+  if (f > 1) f = t - Math.abs(arc.sweep) < Math.PI * 2 - t ? 1 : 0 // past an end: snap to the nearer end
+  const s = f * arc.len
+  const fr = wallFrame(w, s)
+  return { s, dist: dist(p, fr.p), point: fr.p, side: dot(sub(p, fr.p), fr.n) >= 0 ? 'left' : 'right', len: arc.len }
+}
+
+/** Points along a curved (or straight) wall, offset sideways by `off` (+ = left). */
+export function wallPolyline(w: Pick<Wall, 'a' | 'b' | 'curve'>, s0: number, s1: number, off = 0, step = 0.05): Vec2[] {
+  const n = Math.max(1, Math.ceil(Math.abs(s1 - s0) / step))
+  return Array.from({ length: n + 1 }, (_, i) => {
+    const f = wallFrame(w, s0 + ((s1 - s0) * i) / n)
+    return add(f.p, mul(f.n, off))
+  })
+}
+
+/**
+ * Curved walls → short straight pieces (about 3° each) that join with mitres. The plan analysis,
+ * floors, rooms and collisions all work on these; shading makes them read as one smooth curve.
+ */
+export function expandWalls(walls: Wall[]): Wall[] {
+  const out: Wall[] = []
+  for (const w of walls) {
+    const arc = arcOf(w)
+    if (!arc) {
+      out.push(w)
+      continue
+    }
+    const n = Math.max(4, Math.min(120, Math.ceil(Math.abs(arc.sweep) / ((3 * Math.PI) / 180)), Math.ceil(arc.len / 0.04)))
+    const seg = arc.len / n
+    for (let k = 0; k < n; k++) {
+      const a = k === 0 ? w.a : wallFrame(w, seg * k).p
+      const b = k === n - 1 ? w.b : wallFrame(w, seg * (k + 1)).p
+      out.push({ ...w, id: `${w.id}~${k}`, a, b, curve: undefined, parentId: w.id, s0: seg * k, sLen: arc.len, centre: arc.c })
+    }
+  }
+  return out
+}
+
+/** The id a wall (or a piece of a curved wall) is known by in the plan. */
+export const wallIdOf = (w: Wall) => w.parentId ?? w.id
+
+/** The straight piece of `wallId` under `s` metres along it, and where on that piece. */
+export function pieceAt(geom: PlanGeom, wallId: string, s: number): { g: WallGeom; u: number } | null {
+  const g = geom.walls.get(wallId)
+  if (g) return { g, u: s }
+  const pieces = geom.pieces.get(wallId)
+  if (!pieces?.length) return null
+  const seg = (pieces[0].wall.sLen ?? 0) / pieces.length
+  const k = Math.max(0, Math.min(pieces.length - 1, Math.floor(s / (seg || 1))))
+  const p = pieces[k]
+  return { g: p, u: ((s - (p.wall.s0 ?? 0)) / (seg || 1)) * p.len }
+}
+
 // ───────────── analysis ─────────────
 
 export interface WallGeom {
@@ -140,6 +253,8 @@ export interface PlanGeom {
   faces: Face[]
   /** Tops of joints where 3+ walls meet. */
   caps: Vec2[][]
+  /** Curved walls: their straight pieces in order, by the curved wall's id. */
+  pieces: Map<string, WallGeom[]>
 }
 
 interface Node {
@@ -159,7 +274,7 @@ interface HalfEdge {
 }
 
 export function analyse(input: Wall[]): PlanGeom {
-  const walls = input.filter((w) => dist(w.a, w.b) > 1e-3)
+  const walls = expandWalls(input.filter((w) => dist(w.a, w.b) > 1e-3))
   const geoms = new Map<string, WallGeom>()
   for (const w of walls) {
     const L = dist(w.a, w.b)
@@ -354,7 +469,9 @@ export function analyse(input: Wall[]): PlanGeom {
     if (ends.length >= 3) caps.push(corners)
   })
 
-  return { walls: geoms, faces, caps }
+  const pieces = new Map<string, WallGeom[]>()
+  for (const g of geoms.values()) if (g.wall.parentId) pieces.set(g.wall.parentId, [...(pieces.get(g.wall.parentId) ?? []), g])
+  return { walls: geoms, faces, caps, pieces }
 }
 
 /** Room outline at the wall surfaces: each centreline edge moved in by its wall's half thickness. */

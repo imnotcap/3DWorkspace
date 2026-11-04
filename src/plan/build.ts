@@ -17,7 +17,7 @@ import {
 } from 'three'
 import { surfaceFor } from '@/viewport/shading'
 import { presetById } from '@/viewport/materialPresets'
-import { analyse, clampOpening, interiorPoint, pointInPolygon, type PlanGeom, type WallGeom } from './geometry'
+import { analyse, clampOpening, interiorPoint, pointInPolygon, wallIdOf, type PlanGeom, type WallGeom } from './geometry'
 import { roomFor } from './levels'
 import { DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, DEFAULT_WALL_FINISH, EXTERIOR_FINISH, OPENING_DEFAULTS, type Finish, type Level, type Opening, type RoomInfo, type Vec2, type Wall } from './types'
 
@@ -70,11 +70,11 @@ class Builder {
     this.nor.push(n.x, n.y, n.z)
     this.uv.push(u, v)
   }
-  /** Quad p0 p1 p2 p3 (in order around it), facing `n`; uv given per corner. */
-  quad(p: Vector3[], n: Vector3, uv: [number, number][]) {
+  /** Quad p0 p1 p2 p3 (in order around it), facing `n`; uv given per corner. `ns`: per-corner normals (smooth curves). */
+  quad(p: Vector3[], n: Vector3, uv: [number, number][], ns?: Vector3[]) {
     const c = new Vector3().subVectors(p[1], p[0]).cross(new Vector3().subVectors(p[2], p[0]))
     const order = c.dot(n) >= 0 ? [0, 1, 2, 0, 2, 3] : [0, 2, 1, 0, 3, 2]
-    for (const i of order) this.push(p[i], n, uv[i][0], uv[i][1])
+    for (const i of order) this.push(p[i], ns?.[i] ?? n, uv[i][0], uv[i][1])
   }
   /** Flat polygon at height y facing up or down; uv = plan coordinates (metres). */
   polygon(points: Vec2[], y: number, up: boolean, holes: Vec2[][] = []) {
@@ -128,13 +128,26 @@ interface Hole {
   u1: number
   v0: number
   v1: number
+  /** The hole really starts / ends here (on a curved wall a hole spans several pieces). */
+  cap0?: boolean
+  cap1?: boolean
 }
 
 function wallSide(g: WallGeom, side: 'left' | 'right', bottom: number, top: number, holes: Hole[], segments: { u0: number; u1: number }[]): Builder[] {
   const s = side === 'left' ? 1 : -1
+  const c0 = !!g.wall.centre
   const n = new Vector3(g.n[0] * s, 0, g.n[1] * s)
   const origin: Vec2 = [g.wall.a[0] + g.n[0] * g.h * s, g.wall.a[1] + g.n[1] * g.h * s]
   const P = (u: number, v: number) => new Vector3(origin[0] + g.d[0] * u, v, origin[1] + g.d[1] * u)
+  // Pieces of a curved wall: normals point straight out from (or in to) the circle's centre at
+  // every corner, so neighbouring pieces shade as one smooth surface, without facets.
+  const ctr = g.wall.centre
+  const radial = (q: Vector3) => {
+    const r = new Vector3(q.x - ctr![0], 0, q.z - ctr![1]).normalize()
+    return r.dot(n) >= 0 ? r : r.negate()
+  }
+  // Texture u keeps running along the whole curved wall.
+  const uOff = g.wall.s0 ?? 0
   return segments.map(({ u0, u1 }) => {
     const b = new Builder()
     const us = new Set([u0, u1])
@@ -155,12 +168,13 @@ function wallSide(g: WallGeom, side: 'left' | 'right', bottom: number, top: numb
         const c = U[i + 1]
         const lo = Vs[j]
         const hi = Vs[j + 1]
-        b.quad([P(a, lo), P(c, lo), P(c, hi), P(a, hi)], n, [
-          [a * s, lo],
-          [c * s, lo],
-          [c * s, hi],
-          [a * s, hi],
-        ])
+        const corners = [P(a, lo), P(c, lo), P(c, hi), P(a, hi)]
+        b.quad(corners, n, [
+          [(a + uOff) * s, lo],
+          [(c + uOff) * s, lo],
+          [(c + uOff) * s, hi],
+          [(a + uOff) * s, hi],
+        ], c0 ? corners.map(radial) : undefined)
       }
     return b
   })
@@ -194,9 +208,23 @@ export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGe
   for (const g of geom.walls.values()) {
     const w = g.wall
     const top = Math.max(0.1, w.height ?? level.height)
-    // Openings stay inside the wall even after it was shortened.
-    const own = openings.filter((o) => o.wallId === w.id).map((o) => ({ ...o, t: clampOpening(o.t, Math.min(o.width, g.len - 0.1), g.len), width: Math.min(o.width, g.len - 0.1) }))
-    const holes: Hole[] = own.map((o) => ({ u0: o.t - o.width / 2, u1: o.t + o.width / 2, v0: o.sill, v1: Math.min(top - 0.01, o.sill + o.height) }))
+    const id = wallIdOf(w)
+    // Openings stay inside the wall even after it was shortened. On a curved wall they are placed
+    // along the whole curve (arc length) and each straight piece cuts its share of the hole.
+    const fullLen = w.sLen ?? g.len
+    const placed = openings.filter((o) => o.wallId === id).map((o) => ({ ...o, t: clampOpening(o.t, Math.min(o.width, fullLen - 0.1), fullLen), width: Math.min(o.width, fullLen - 0.1) }))
+    const pieceCount = w.parentId ? (geom.pieces.get(w.parentId)?.length ?? 1) : 1
+    const segArc = fullLen / pieceCount
+    const k = w.parentId ? g.len / segArc : 1
+    const s0 = w.s0 ?? 0
+    const clipped = placed
+      .map((o) => {
+        const a = Math.max(o.t - o.width / 2, s0)
+        const e = Math.min(o.t + o.width / 2, s0 + (w.parentId ? segArc : g.len))
+        return e - a > 1e-4 ? { o, u0: (a - s0) * k, u1: (e - s0) * k, cap0: o.t - o.width / 2 >= s0 - 1e-6, cap1: o.t + o.width / 2 <= s0 + segArc + 1e-6 || !w.parentId } : null
+      })
+      .filter((x) => !!x)
+    const holes: Hole[] = clipped.map((c) => ({ u0: c.u0, u1: c.u1, v0: c.o.sill, v1: Math.min(top - 0.01, c.o.sill + c.o.height), cap0: c.cap0, cap1: c.cap1 }))
 
     for (const side of ['left', 'right'] as const) {
       const corner0 = side === 'left' ? g.la : g.ra
@@ -211,7 +239,7 @@ export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGe
         const accent = w.paint?.[side]
         const f = accent ?? wallFinishFor(face)
         const m = face === null && !accent ? exterior : finishMaterial(f, 'wall', onUpgrade)
-        group.add(mesh(b.geometry(), m, `wall ${side}`, { kind: 'wall', id: w.id, side, face }))
+        group.add(mesh(b.geometry(), m, `wall ${side}`, { kind: 'wall', id, side, face }))
       })
     }
 
@@ -225,21 +253,39 @@ export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGe
     const R = (u: number, v: number) => new Vector3(w.a[0] + g.d[0] * u - g.n[0] * g.h, v, w.a[1] + g.d[1] * u - g.n[1] * g.h)
     for (const h of holes) {
       const dn = new Vector3(g.d[0], 0, g.d[1])
-      b.quad([L(h.u0, h.v0), L(h.u0, h.v1), R(h.u0, h.v1), R(h.u0, h.v0)], dn, [[0, h.v0], [0, h.v1], [1, h.v1], [1, h.v0]])
-      b.quad([L(h.u1, h.v0), L(h.u1, h.v1), R(h.u1, h.v1), R(h.u1, h.v0)], dn.clone().negate(), [[0, h.v0], [0, h.v1], [1, h.v1], [1, h.v0]])
+      if (h.cap0 !== false) b.quad([L(h.u0, h.v0), L(h.u0, h.v1), R(h.u0, h.v1), R(h.u0, h.v0)], dn, [[0, h.v0], [0, h.v1], [1, h.v1], [1, h.v0]])
+      if (h.cap1 !== false) b.quad([L(h.u1, h.v0), L(h.u1, h.v1), R(h.u1, h.v1), R(h.u1, h.v0)], dn.clone().negate(), [[0, h.v0], [0, h.v1], [1, h.v1], [1, h.v0]])
       b.quad([L(h.u0, h.v1), L(h.u1, h.v1), R(h.u1, h.v1), R(h.u0, h.v1)], up.clone().negate(), [[h.u0, 0], [h.u1, 0], [h.u1, 1], [h.u0, 1]])
       if (h.v0 > 0.001) b.quad([L(h.u0, h.v0), L(h.u1, h.v0), R(h.u1, h.v0), R(h.u0, h.v0)], up, [[h.u0, 0], [h.u1, 0], [h.u1, 1], [h.u0, 1]])
     }
-    group.add(mesh(b.geometry(), plaster, 'wall top', { kind: 'wall', id: w.id }))
+    group.add(mesh(b.geometry(), plaster, 'wall top', { kind: 'wall', id }))
 
     // Doors and windows.
-    for (const o of own) {
-      const segAt = g.segments.find((s) => o.t >= s.u0 && o.t <= s.u1) ?? g.segments[0]
-      const interior: 'left' | 'right' = segAt.left !== null ? 'left' : segAt.right !== null ? 'right' : 'left'
-      const model = buildOpening(o, g, Math.min(top - 0.01, o.sill + o.height) - o.sill, interior, onUpgrade)
-      model.position.set(w.a[0] + g.d[0] * o.t, o.sill, w.a[1] + g.d[1] * o.t)
+    for (const c of clipped) {
+      const o = c.o
+      const H = Math.min(top - 0.01, o.sill + o.height) - o.sill
+      let model: Group | null = null
+      let u: number
+      if (!w.parentId) {
+        u = o.t
+        const segAt = g.segments.find((sg) => u >= sg.u0 && u <= sg.u1) ?? g.segments[0]
+        model = buildOpening(o, g, H, segAt.left !== null ? 'left' : segAt.right !== null ? 'right' : 'left', onUpgrade)
+      } else {
+        u = (c.u0 + c.u1) / 2
+        const segAt = g.segments.find((sg) => u >= sg.u0 && u <= sg.u1) ?? g.segments[0]
+        const interior = segAt.left !== null ? 'left' : segAt.right !== null ? 'right' : 'left'
+        const window = !OPENING_DEFAULTS[o.kind].door && o.kind !== 'french-window'
+        if (window) model = windowPiece(o, g, c.u1 - c.u0, H, c.cap0, c.cap1, interior, onUpgrade)
+        else if (o.t >= s0 && o.t < s0 + segArc) {
+          // Doors on a curve: one flat door across the opening, on the piece at its middle.
+          u = (o.t - s0) * k
+          model = buildOpening(o, g, H, interior, onUpgrade)
+        }
+      }
+      if (!model) continue
+      model.position.set(w.a[0] + g.d[0] * u, o.sill, w.a[1] + g.d[1] * u)
       model.rotation.y = -Math.atan2(g.d[1], g.d[0])
-      model.traverse((c) => (c.userData.pick = { kind: 'opening', id: o.id } satisfies PickInfo))
+      model.traverse((x) => (x.userData.pick = { kind: 'opening', id: o.id } satisfies PickInfo))
       group.add(model)
     }
   }
@@ -411,6 +457,40 @@ function buildOpening(o: Opening, g: WallGeom, height: number, interior: 'left' 
     grp.add(box(W + 0.04, 0.03, T / 2 + 0.05, ALU, 0, -0.015 + 0.004, -zIn * (T / 4 + 0.025)))
   }
   if (o.kind === 'french-window') grp.add(box(W, 0.02, T + 0.004, frameM, 0, 0.01, 0))
+  return grp
+}
+
+/**
+ * One piece of a window on a curved wall: rails, glass and window board along this piece, with the
+ * jamb and frame stile only where the window really starts or ends. Side by side, the pieces make a
+ * window that follows the curve.
+ */
+function windowPiece(o: Opening, g: WallGeom, len: number, H: number, cap0: boolean, cap1: boolean, interior: 'left' | 'right', onUpgrade?: () => void): Group {
+  const grp = new Group()
+  grp.name = `${OPENING_DEFAULTS[o.kind].label} (curved)`
+  const T = g.h * 2
+  const frameM = finishMaterial(o.frame, 'frame', onUpgrade)
+  const jamb = 0.02
+  const fw = 0.06
+  const depth = 0.07
+  const zIn = interior === 'left' ? 1 : -1
+  // A hair longer than the piece so neighbouring pieces overlap instead of leaving a seam.
+  const L = len + 0.004
+  grp.add(box(L, jamb, T + 0.004, frameM, 0, H - jamb / 2, 0))
+  grp.add(box(L, fw, depth, frameM, 0, fw / 2, 0), box(L, fw, depth, frameM, 0, H - jamb - fw / 2, 0))
+  for (const [cap, sx] of [
+    [cap0, -1],
+    [cap1, 1],
+  ] as const) {
+    if (!cap) continue
+    grp.add(box(jamb, H, T + 0.004, frameM, sx * (len / 2 - jamb / 2), H / 2, 0))
+    grp.add(box(fw, H - jamb, depth, frameM, sx * (len / 2 - jamb - fw / 2), (H - jamb) / 2, 0))
+  }
+  const pane = new Mesh(new BoxGeometry(L, Math.max(0.01, H - jamb - fw * 2), 0.006), GLASS)
+  pane.position.set(0, (H - jamb) / 2, 0)
+  grp.add(pane)
+  grp.add(box(L, 0.025, T / 2 + 0.04, frameM, 0, -0.0125 + 0.004, zIn * (T / 4 + 0.02)))
+  grp.add(box(L, 0.03, T / 2 + 0.05, ALU, 0, -0.015 + 0.004, -zIn * (T / 4 + 0.025)))
   return grp
 }
 

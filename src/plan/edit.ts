@@ -1,6 +1,6 @@
 // Editing operations on the plan (pure functions over plan data).
-import { add, dist, dot, len, mul, norm, perp, projectOnSegment, sub, type WallGeom } from './geometry'
-import type { Vec2, Wall } from './types'
+import { add, dist, dot, len, mul, norm, projectOnSegment, projectOnWall, sub, type WallGeom } from './geometry'
+import type { Opening, Vec2, Wall } from './types'
 
 const EP = 2e-3
 
@@ -94,8 +94,9 @@ export function snapPoint(p: Vec2, o: { walls: Wall[]; grid: number; pxPerM: num
     }
   } else q = [Math.round(p[0] / o.grid) * o.grid, Math.round(p[1] / o.grid) * o.grid]
 
-  // Onto an existing wall (a T-joint).
+  // Onto an existing wall (a T-joint). Curved walls only join at their ends.
   for (const w of o.walls) {
+    if (w.curve) continue
     const pr = projectOnSegment(q, w.a, w.b)
     if (pr.dist < tol * 0.8 && pr.t > 0.01 && pr.t < 0.99) {
       if (!o.from) return { p: pr.point, kind: 'wall' }
@@ -137,13 +138,37 @@ export function snapPoint(p: Vec2, o: { walls: Wall[]; grid: number; pxPerM: num
 export function nearestWall(p: Vec2, walls: Wall[], max: number) {
   let best: { wall: Wall; t: number; dist: number; side: 'left' | 'right'; len: number } | null = null
   for (const w of walls) {
-    const pr = projectOnSegment(p, w.a, w.b)
-    const L = dist(w.a, w.b)
+    // Along the wall, following its curve: `t` and `len` are arc lengths on curved walls.
+    const pr = projectOnWall(p, w)
     if (pr.dist > max || (best && pr.dist >= best.dist)) continue
-    const n = perp(norm(sub(w.b, w.a)))
-    best = { wall: w, t: pr.t * L, dist: pr.dist, side: dot(sub(p, pr.point), n) >= 0 ? 'left' : 'right', len: L }
+    best = { wall: w, t: pr.s, dist: pr.dist, side: pr.side, len: pr.len }
   }
   return best
+}
+
+/**
+ * Turn the walls between corners `a` and `c` into one curved wall bowing out by `curve`:
+ * an existing wall a–c is bent; two walls a–b–c (a corner) are replaced by one rounded wall;
+ * otherwise a new curved wall is drawn. Doors and windows on replaced walls are dropped.
+ */
+export function roundBetween(walls: Wall[], openings: Opening[], levelId: string, a: Vec2, c: Vec2, curve: number, thickness: number, uid: () => string): { walls: Wall[]; openings: Opening[]; id: string } {
+  const level = walls.filter((w) => w.levelId === levelId)
+  const direct = level.find((w) => (same(w.a, a) && same(w.b, c)) || (same(w.a, c) && same(w.b, a)))
+  if (direct) {
+    const sign = same(direct.a, a) ? 1 : -1
+    return { walls: walls.map((w) => (w === direct ? { ...w, curve: curve * sign } : w)), openings, id: direct.id }
+  }
+  const touching = (p: Vec2) => level.filter((w) => !w.curve && (same(w.a, p) || same(w.b, p)))
+  const other = (w: Wall, p: Vec2) => (same(w.a, p) ? w.b : w.a)
+  for (const wa of touching(a))
+    for (const wc of touching(c)) {
+      if (wa === wc || !same(other(wa, a), other(wc, c))) continue
+      const gone = new Set([wa.id, wc.id])
+      const wall: Wall = { id: uid(), levelId, a, b: c, thickness: wa.thickness, height: wa.height, curve, paint: wa.paint }
+      return { walls: [...walls.filter((w) => !gone.has(w.id)), wall], openings: openings.filter((o) => !gone.has(o.wallId)), id: wall.id }
+    }
+  const wall: Wall = { id: uid(), levelId, a, b: c, thickness, curve }
+  return { walls: [...walls, wall], openings, id: wall.id }
 }
 
 /**

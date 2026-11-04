@@ -4,9 +4,9 @@ import { cn } from '@/lib/cn'
 import { activeProject, uid, useActiveProject, useWorkspace, type SceneObject, type Vec3 } from '@/store/workspace'
 import { viewport } from '@/viewport/bridge'
 import { DARK_THEME, drawPlan, formatLength, type SvgNode } from './draw'
-import { moveEndpoints, moveWall, nearestWall, rectWalls, same, snapPoint, snapToWall } from './edit'
+import { moveEndpoints, moveWall, nearestWall, rectWalls, roundBetween, same, snapPoint, snapToWall } from './edit'
 import { catalogItemOf, footprint, objectSize } from './footprint'
-import { add, analyse, clampOpening, dist, mul, norm, sub } from './geometry'
+import { add, analyse, clampOpening, dist, dot, mul, norm, perp, projectOnWall, sub, wallFrame, wallLength, wallPolyline } from './geometry'
 import { tourPath, tourPose } from './tour'
 import { OPENING_DEFAULTS, type Opening, type Vec2 } from './types'
 import { placeItem } from './place'
@@ -26,6 +26,8 @@ type Drag =
   | { kind: 'rotate'; id: string }
   | { kind: 'tour'; id: string }
   | { kind: 'room-rect'; start: Vec2 }
+  /** Bending a wall by its middle handle. */
+  | { kind: 'bend'; id: string }
   /** Resizing an opening by one end; the other end (`fixed`, metres along the wall) stays put. */
   | { kind: 'opening-end'; id: string; fixed: number }
   /** Resizing a piece by one side; the opposite side stays put. Size and placement at the start. */
@@ -60,9 +62,11 @@ export function PlanEditor() {
   const svg = useRef<SVGSVGElement>(null)
   const [size, setSize] = useState({ w: 800, h: 600 })
   const [xf, setXf] = useState<ViewXf>({ scale: 50, ox: 400, oy: 300 })
-  const [cursor, setCursor] = useState<{ p: Vec2; guideX?: number; guideY?: number } | null>(null)
+  const [cursor, setCursor] = useState<{ p: Vec2; guideX?: number; guideY?: number; shift?: boolean } | null>(null)
   const [chain, setChain] = useState<Vec2[]>([])
   const [rectStart, setRectStart] = useState<Vec2 | null>(null)
+  /** Curve tool: the two corners picked so far (then the pointer sets how far it bows). */
+  const [arc, setArc] = useState<{ a: Vec2; c?: Vec2 } | null>(null)
   const [placeYaw, setPlaceYaw] = useState(0)
   /** Live size readout while a resize handle is dragged. */
   const [sizeLabel, setSizeLabel] = useState<{ at: Vec2; text: string } | null>(null)
@@ -122,9 +126,10 @@ export function PlanEditor() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return
-      if (e.key === 'Escape' && (chain.length || rectStart || placing)) {
+      if (e.key === 'Escape' && (chain.length || rectStart || placing || arc)) {
         e.stopPropagation()
         setChain([])
+        setArc(null)
         setRectStart(null)
         ws().setPlacing(null)
       }
@@ -137,7 +142,7 @@ export function PlanEditor() {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [chain.length, rectStart, placing, ws])
+  }, [chain.length, rectStart, placing, arc, ws])
 
   // ───────── pointer ─────────
   const onPointerDown = (e: RPointerEvent<SVGSVGElement>) => {
@@ -168,6 +173,19 @@ export function PlanEditor() {
       // Closing the loop, or ending on an existing wall, finishes the chain.
       const closes = same(snapped, chain[0]) || walls.some((w) => same(w.a, snapped) || same(w.b, snapped) || nearestWall(snapped, [w], 0.002))
       setChain(closes ? [] : [...chain, snapped])
+      return
+    }
+    if (tool === 'arc') {
+      const q = snapPoint(p, snapOpts()).p
+      if (!arc) return setArc({ a: q })
+      if (!arc.c) return dist(arc.a, q) > 0.2 ? setArc({ ...arc, c: q }) : undefined
+      const curve = arcCurve(arc.a, arc.c, p, e.shiftKey)
+      s.editPlan('Curved wall', (pl) => {
+        const r = roundBetween(pl.walls, pl.openings, level.id, arc.a, arc.c!, curve, thickness, uid)
+        setTimeout(() => ws().selectPlan({ kind: 'wall', id: r.id }))
+        return { ...pl, walls: r.walls, openings: r.openings }
+      })
+      setArc(null)
       return
     }
     if (tool === 'room') {
@@ -201,11 +219,16 @@ export function PlanEditor() {
     }
 
     // Select tool
+    if (kind === 'bend') {
+      s.checkpoint('Curve wall')
+      drag.current = { kind: 'bend', id }
+      return
+    }
     if (kind === 'opening-end') {
       const o = project.openings.find((x) => x.id === id)
       const w = o && project.walls.find((x) => x.id === o.wallId)
       if (!o || !w) return
-      const L = dist(w.a, w.b)
+      const L = wallLength(w)
       const t = clampOpening(o.t, o.width, L)
       s.checkpoint('Resize opening')
       drag.current = { kind: 'opening-end', id, fixed: target!.getAttribute('data-end') === 'a' ? t + o.width / 2 : t - o.width / 2 }
@@ -270,10 +293,10 @@ export function PlanEditor() {
     const d = drag.current
     const s = ws()
     if (!d) {
-      if (tool === 'wall' || tool === 'room') {
+      if (tool === 'wall' || tool === 'room' || (tool === 'arc' && !arc?.c)) {
         const r = snapPoint(p, snapOpts(tool === 'wall' ? chain.at(-1) : null, e.shiftKey))
         setCursor({ p: r.p, guideX: r.guideX, guideY: r.guideY })
-      } else setCursor({ p })
+      } else setCursor({ p, shift: e.shiftKey })
       return
     }
     if (d.kind === 'pan') return setXf((v) => ({ ...v, ox: d.ox + e.clientX - d.sx, oy: d.oy + e.clientY - d.sy }))
@@ -301,26 +324,32 @@ export function PlanEditor() {
       const o = project.openings.find((x) => x.id === d.id)
       const w = o && project.walls.find((x) => x.id === o.wallId)
       if (!o || !w) return
-      const L = dist(w.a, w.b)
-      const dir = norm(sub(w.b, w.a))
-      const t = clampOpening(Math.round(((p[0] - w.a[0]) * dir[0] + (p[1] - w.a[1]) * dir[1]) / grid) * grid, o.width, L)
+      const L = wallLength(w)
+      const t = clampOpening(Math.round(projectOnWall(p, w).s / grid) * grid, o.width, L)
       s.editPlan(null, (pl) => ({ ...pl, openings: pl.openings.map((x) => (x.id === o.id ? { ...x, t } : x)) }))
+      return
+    }
+    if (d.kind === 'bend') {
+      const w = project.walls.find((x) => x.id === d.id)
+      if (!w) return
+      const curve = arcCurve(w.a, w.b, p, e.shiftKey)
+      s.editPlan(null, (pl) => ({ ...pl, walls: pl.walls.map((x) => (x.id === w.id ? { ...x, curve: curve || undefined } : x)) }))
+      setSizeLabel({ at: wallFrame({ ...w, curve }, wallLength({ ...w, curve }) / 2).p, text: curve ? `⌒ ${formatLength(Math.abs(curve))}` : 'Straight' })
       return
     }
     if (d.kind === 'opening-end') {
       const o = project.openings.find((x) => x.id === d.id)
       const w = o && project.walls.find((x) => x.id === o.wallId)
       if (!o || !w) return
-      const L = dist(w.a, w.b)
-      const dir = norm(sub(w.b, w.a))
-      let u = (p[0] - w.a[0]) * dir[0] + (p[1] - w.a[1]) * dir[1]
+      const L = wallLength(w)
+      let u = projectOnWall(p, w).s
       if (!e.shiftKey) u = Math.round(u / grid) * grid
       // The moving end stays on the wall, at least 30 cm from the fixed one.
       u = Math.max(0.05, Math.min(L - 0.05, u))
       const width = Math.max(0.3, Math.min(L - 0.1, Math.abs(u - d.fixed)))
       const t = clampOpening(d.fixed + (Math.sign(u - d.fixed) || 1) * (width / 2), width, L)
       s.editPlan(null, (pl) => ({ ...pl, openings: pl.openings.map((x) => (x.id === o.id ? { ...x, width, t } : x)) }))
-      setSizeLabel({ at: add(w.a, mul(dir, t)), text: formatLength(width) })
+      setSizeLabel({ at: wallFrame(w, t).p, text: formatLength(width) })
       return
     }
     if (d.kind === 'resize') {
@@ -446,13 +475,10 @@ export function PlanEditor() {
     const def = OPENING_DEFAULTS[openingKind]
     const width = Math.min(def.width, hit.len - 0.2)
     const t = clampOpening(Math.round(hit.t / 0.05) * 0.05, width, hit.len)
-    const dir = norm(sub(hit.wall.b, hit.wall.a))
-    const a = add(hit.wall.a, mul(dir, t - width / 2))
-    const b = add(hit.wall.a, mul(dir, t + width / 2))
-    return { a, b, w: hit.wall.thickness + 0.04, label: formatLength(width) }
+    return { line: wallPolyline(hit.wall, t - width / 2, t + width / 2), w: hit.wall.thickness + 0.04, label: formatLength(width) }
   })()
 
-  const cursorStyle = placing || tool === 'wall' || tool === 'room' || tool === 'tour' ? 'crosshair' : tool === 'door' || tool === 'window' ? 'copy' : drag.current?.kind === 'pan' ? 'grabbing' : 'default'
+  const cursorStyle = placing || tool === 'wall' || tool === 'room' || tool === 'tour' || tool === 'arc' ? 'crosshair' : tool === 'door' || tool === 'window' ? 'copy' : drag.current?.kind === 'pan' ? 'grabbing' : 'default'
   const minor = grid * Math.max(1, Math.round(10 / (grid * xf.scale)))
 
   return (
@@ -468,7 +494,7 @@ export function PlanEditor() {
         onPointerUp={onPointerUp}
         onPointerLeave={() => setCursor(null)}
         onDoubleClick={() => setChain([])}
-        onContextMenu={(e) => (e.preventDefault(), setChain([]))}
+        onContextMenu={(e) => (e.preventDefault(), setChain([]), setArc(null))}
         onWheel={onWheel}
         data-testid="plan"
       >
@@ -490,6 +516,44 @@ export function PlanEditor() {
             (selWall ? [selWall.a, selWall.b] : []).map((p, i) => (
               <circle key={i} cx={p[0]} cy={p[1]} r={px(6)} fill="#141414" stroke="#4c8dff" strokeWidth={px(2)} data-kind="endpoint" data-x={p[0]} data-y={p[1]} style={{ cursor: 'move' }} />
             ))}
+          {/* Selected wall: drag the middle handle sideways to curve it (back to the line straightens it). */}
+          {tool === 'select' &&
+            selWall &&
+            (() => {
+              const f = wallFrame(selWall, wallLength(selWall) / 2)
+              return (
+                <g>
+                  <circle cx={f.p[0]} cy={f.p[1]} r={px(7)} fill="#4c8dff" stroke="#141414" strokeWidth={px(2)} data-kind="bend" data-id={selWall.id} style={{ cursor: 'grab' }} />
+                  <path d={`M ${f.p[0] - px(3.5)} ${f.p[1] + px(1.5)} Q ${f.p[0]} ${f.p[1] - px(3)} ${f.p[0] + px(3.5)} ${f.p[1] + px(1.5)}`} fill="none" stroke="#fff" strokeWidth={px(1.4)} pointerEvents="none" />
+                </g>
+              )
+            })()}
+          {/* Curve tool: corners picked, and the curve under the pointer. */}
+          {tool === 'arc' && arc && cursor && (
+            <g pointerEvents="none">
+              <circle cx={arc.a[0]} cy={arc.a[1]} r={px(5)} fill="#4c8dff" />
+              {arc.c ? (
+                (() => {
+                  const curve = arcCurve(arc.a, arc.c, cursor.p, !!cursor.shift)
+                  const w = { a: arc.a, b: arc.c, curve }
+                  const line = wallPolyline(w, 0, wallLength(w))
+                  const mid = wallFrame(w, wallLength(w) / 2).p
+                  return (
+                    <>
+                      <circle cx={arc.c[0]} cy={arc.c[1]} r={px(5)} fill="#4c8dff" />
+                      <polyline points={line.map((q) => q.join(',')).join(' ')} fill="none" stroke="#4c8dff" strokeWidth={thickness} strokeOpacity={0.5} />
+                      <polyline points={line.map((q) => q.join(',')).join(' ')} fill="none" stroke="#4c8dff" strokeWidth={px(1.5)} />
+                      <text x={mid[0]} y={mid[1] - px(12)} fontSize={px(12)} fill="#fff" textAnchor="middle" stroke="#141414" strokeWidth={px(3)} paintOrder="stroke">
+                        {Math.abs(Math.abs(curve) - dist(arc.a, arc.c) / 2) < 1e-6 ? 'Half circle' : `⌒ ${formatLength(Math.abs(curve))}`}
+                      </text>
+                    </>
+                  )
+                })()
+              ) : (
+                <line x1={arc.a[0]} y1={arc.a[1]} x2={cursor.p[0]} y2={cursor.p[1]} stroke="#4c8dff" strokeWidth={px(1.5)} strokeDasharray={`${px(5)} ${px(4)}`} />
+              )}
+            </g>
+          )}
           {/* Selected piece: rotate handle in front of it. */}
           {tool === 'select' &&
             selObj &&
@@ -544,13 +608,14 @@ export function PlanEditor() {
           {tool === 'select' &&
             selOpening &&
             (() => {
-              const g = geom.walls.get(selOpening.wallId)
-              if (!g) return null
-              const t = clampOpening(selOpening.t, selOpening.width, g.len)
+              const ow = walls.find((x) => x.id === selOpening.wallId)
+              if (!ow) return null
+              const t = clampOpening(selOpening.t, selOpening.width, wallLength(ow))
               const r = px(5)
-              const horizontal = Math.abs(g.d[0]) > Math.abs(g.d[1])
               return (['a', 'b'] as const).map((end) => {
-                const at = add(g.wall.a, mul(g.d, t + (end === 'a' ? -1 : 1) * (selOpening.width / 2)))
+                const f = wallFrame(ow, t + (end === 'a' ? -1 : 1) * (selOpening.width / 2))
+                const at = f.p
+                const horizontal = Math.abs(f.d[0]) > Math.abs(f.d[1])
                 return (
                   <rect
                     key={end}
@@ -625,13 +690,13 @@ export function PlanEditor() {
           )}
           {doorPreview && (
             <g pointerEvents="none">
-              <line x1={doorPreview.a[0]} y1={doorPreview.a[1]} x2={doorPreview.b[0]} y2={doorPreview.b[1]} stroke="#4c8dff" strokeWidth={doorPreview.w} strokeOpacity={0.7} />
+              <polyline points={doorPreview.line.map((q) => q.join(',')).join(' ')} fill="none" stroke="#4c8dff" strokeWidth={doorPreview.w} strokeOpacity={0.7} />
             </g>
           )}
           {ghost && (
             <polygon points={ghost.corners.map((q) => q.join(',')).join(' ')} fill="#4c8dff33" stroke={ghost.snapped ? '#46a758' : '#4c8dff'} strokeWidth={px(1.5)} pointerEvents="none" />
           )}
-          {(tool === 'wall' || tool === 'room') && cursor && (
+          {(tool === 'wall' || tool === 'room' || (tool === 'arc' && !arc?.c)) && cursor && (
             <g pointerEvents="none">
               {cursor.guideX !== undefined && <line x1={cursor.guideX} x2={cursor.guideX} y1={-1000} y2={1000} stroke="#4c8dff" strokeWidth={px(1)} strokeDasharray={`${px(4)} ${px(4)}`} />}
               {cursor.guideY !== undefined && <line y1={cursor.guideY} y2={cursor.guideY} x1={-1000} x2={1000} stroke="#4c8dff" strokeWidth={px(1)} strokeDasharray={`${px(4)} ${px(4)}`} />}
@@ -644,6 +709,22 @@ export function PlanEditor() {
       {!walls.length && tool === 'select' && !placing && <EmptyPlanHint />}
     </div>
   )
+}
+
+/**
+ * How far a wall from `a` to `c` bows out so it passes the pointer: snapped to 5 cm, to a half
+ * circle when close to one, and straight near the line. Shift: free.
+ */
+function arcCurve(a: Vec2, c: Vec2, p: Vec2, free: boolean) {
+  const n = perp(norm(sub(c, a)))
+  const mid = mul(add(a, c), 0.5)
+  let s = dot(sub(p, mid), n)
+  if (free) return s
+  const half = dist(a, c) / 2
+  if (Math.abs(Math.abs(s) - half) < 0.12) return Math.sign(s) * half
+  if (Math.abs(s) < 0.06) return 0
+  s = Math.round(s / 0.05) * 0.05
+  return s
 }
 
 function ScaleBar({ scale }: { scale: number }) {

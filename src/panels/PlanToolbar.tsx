@@ -1,4 +1,4 @@
-import { Magnet, Box, BrickWall, DoorOpen, Footprints, Maximize2, MousePointer2, PanelsTopLeft, Plus, Square, SquareDashed, AppWindow, Trash2 } from 'lucide-react'
+import { Magnet, Spline, Box, BrickWall, DoorOpen, Footprints, Maximize2, MousePointer2, PanelsTopLeft, Plus, Square, SquareDashed, AppWindow, Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { actions } from '@/lib/actions'
@@ -17,6 +17,7 @@ const VIEWS: { id: View; label: string; icon: ReactNode }[] = [
 const TOOLS: { id: PlanTool; label: string; key: string; icon: ReactNode }[] = [
   { id: 'select', label: 'Select', key: 'V', icon: <MousePointer2 className="size-3.5" /> },
   { id: 'wall', label: 'Wall', key: 'W', icon: <BrickWall className="size-3.5" /> },
+  { id: 'arc', label: 'Curve', key: 'A', icon: <Spline className="size-3.5" /> },
   { id: 'room', label: 'Room', key: 'M', icon: <Square className="size-3.5" /> },
   { id: 'door', label: 'Door', key: 'D', icon: <DoorOpen className="size-3.5" /> },
   { id: 'window', label: 'Window', key: 'O', icon: <AppWindow className="size-3.5" /> },
@@ -105,6 +106,7 @@ export function PlanToolbar() {
           ))}
         </div>
       )}
+      {tool === 'arc' && <span className="text-2xs text-faint">Click a corner, then another corner, then pull the curve out and click. Two walls round a corner into one curve. Shift: free.</span>}
       {tool === 'tour' && (
         <div className="flex items-center gap-1">
           <Seg onClick={actions.autoTour}>Auto tour</Seg>
