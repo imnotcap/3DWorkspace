@@ -20,7 +20,9 @@ import { surfaceFor } from '@/viewport/shading'
 import { presetById } from '@/viewport/materialPresets'
 import { analyse, clampOpening, interiorPoint, pointInPolygon, wallIdOf, type PlanGeom, type WallGeom } from './geometry'
 import { roomFor } from './levels'
-import { DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, DEFAULT_WALL_FINISH, EXTERIOR_FINISH, OPENING_DEFAULTS, type Finish, type Level, type Opening, type RoomInfo, type Vec2, type Wall } from './types'
+import { trimGeometry } from './trim'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, DEFAULT_TRIM, DEFAULT_WALL_FINISH, EXTERIOR_FINISH, OPENING_DEFAULTS, type Finish, type Level, type Opening, type RoomInfo, type Vec2, type Wall } from './types'
 
 /**
  * Plan → 3D. Walls are built face by face so every stretch of wall surface knows which room
@@ -211,6 +213,9 @@ export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGe
   const faceRoom = geom.faces.map((f) => roomFor(f, rooms, level.id))
   const wallFinishFor = (face: number | null) => (face === null ? EXTERIOR_FINISH : (faceRoom[face]?.walls ?? DEFAULT_WALL_FINISH))
 
+  // Panelling and skirting, merged per room and colour.
+  const trims = new Map<string, { geos: BufferGeometry[]; color: string; face: number }>()
+
   for (const g of geom.walls.values()) {
     const w = g.wall
     const top = Math.max(0.1, w.height ?? level.height)
@@ -239,6 +244,20 @@ export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGe
       const uEnd = (corner1[0] - w.a[0]) * g.d[0] + (corner1[1] - w.a[1]) * g.d[1]
       const segs = g.segments.map((sg, i) => ({ u0: i === 0 ? uStart : sg.u0, u1: i === g.segments.length - 1 ? uEnd : sg.u1, face: side === 'left' ? sg.left : sg.right }))
       const builders = wallSide(g, side, bottom, top, holes, segs)
+      // Skirting boards and wall panels on faces that look into a room.
+      for (const sg of segs) {
+        if (sg.face === null) continue
+        const trim = faceRoom[sg.face]?.trim ?? DEFAULT_TRIM
+        if (trim.panels === 'none' && trim.skirting === 'none') continue
+        const run: [number, number] = w.parentId ? [g.h, fullLen - g.h] : [sg.u0, sg.u1]
+        const piece: [number, number] = w.parentId ? [s0 + sg.u0 / k, s0 + sg.u1 / k] : [sg.u0, sg.u1]
+        const geos = trimGeometry({ g, side, trim, ceiling: top, run, piece, s0: w.parentId ? s0 : 0, k, openings: placed.map((o) => ({ a: o.t - o.width / 2, b: o.t + o.width / 2, sill: o.sill, top: o.sill + o.height })) })
+        if (!geos.length) continue
+        const key = `${sg.face}|${trim.color}`
+        const e = trims.get(key) ?? { geos: [], color: trim.color, face: sg.face }
+        e.geos.push(...geos)
+        trims.set(key, e)
+      }
       builders.forEach((b, i) => {
         if (b.empty) return
         const face = segs[i].face
@@ -294,6 +313,14 @@ export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGe
       model.traverse((x) => (x.userData.pick = { kind: 'opening', id: o.id } satisfies PickInfo))
       group.add(model)
     }
+  }
+
+  for (const e of trims.values()) {
+    const merged = mergeGeometries(e.geos)
+    e.geos.forEach((x) => x.dispose())
+    if (!merged) continue
+    const info = faceRoom[e.face]
+    group.add(mesh(merged, finishMaterial({ color: e.color }, 'frame', onUpgrade), 'wall trim', { kind: 'room', id: info?.id ?? `face:${e.face}`, face: e.face }))
   }
 
   if (geom.caps.length) {

@@ -432,7 +432,7 @@ function SceneContent() {
       <hemisphereLight args={['#ffffff', '#3a3a3a', light.fill]} />
 
       {/* Everything that is part of the picture (the path tracer bakes this; helpers stay out). */}
-      <group name="__world">
+      <group name="world">
       <SunLight />
       {project.levels.map((level, i) => (
         <group

@@ -160,7 +160,7 @@ class Engine {
 
   /** Grid, gizmo and selection outlines over a path-traced frame, hidden behind the scene's own depth. */
   overlays(scene: Scene, camera: Camera) {
-    const world = scene.getObjectByName('__world')
+    const world = scene.getObjectByName('world')
     const helpers = scene.getObjectByName('__helpers')
     const gl = this.gl
     const auto = gl.autoClear
@@ -253,7 +253,7 @@ class Engine {
     }
     const st = useWorkspace.getState().settings
     const pt = this.tracer()
-    const world = scene.getObjectByName('__world') ?? scene
+    const world = scene.getObjectByName('world') ?? scene
     scene.updateMatrixWorld()
     const sceneSig = sceneSignature(world)
     const now = performance.now()
