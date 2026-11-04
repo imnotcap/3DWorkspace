@@ -47,6 +47,7 @@ export function App() {
   const [dragging, setDragging] = useState(false)
   const showTimeline = useWorkspace((s) => s.settings.showTimeline)
   const view = useWorkspace((s) => s.view)
+  const sidebar = useWorkspace((s) => s.settings.sidebar)
   const screen = useWorkspace((s) => s.screen)
   if (screen === 'home') return <Home />
 
@@ -102,7 +103,8 @@ export function App() {
               )}
             </Group>
           </Panel>
-          <Handle />
+          {sidebar && <Handle />}
+          {sidebar && (
           <Panel minSize="260px" defaultSize="24" maxSize="40">
             <Group orientation="vertical">
               <Panel defaultSize="52" minSize="20" className="rounded-lg bg-panel">
@@ -114,6 +116,7 @@ export function App() {
               </Panel>
             </Group>
           </Panel>
+          )}
         </Group>
       </div>
       <StatusBar />

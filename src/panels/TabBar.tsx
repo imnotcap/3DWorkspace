@@ -1,5 +1,5 @@
 import { motion } from 'motion/react'
-import { Box, Menu as MenuIcon, Plus, X } from 'lucide-react'
+import { Box, Menu as MenuIcon, PanelRightClose, PanelRightOpen, Plus, X } from 'lucide-react'
 import { useState } from 'react'
 import { actions } from '@/lib/actions'
 import { cn } from '@/lib/cn'
@@ -14,6 +14,7 @@ export function TabBar() {
   const undoLabel = useWorkspace((s) => s.past.at(-1)?.label)
   const redoLabel = useWorkspace((s) => s.future.at(-1)?.label)
   const [editing, setEditing] = useState<string | null>(null)
+  const sidebar = useWorkspace((s) => s.settings.sidebar)
 
   return (
     <div className="flex h-9 shrink-0 items-center gap-1 px-1.5">
@@ -90,6 +91,9 @@ export function TabBar() {
           {job.message}
         </div>
       )}
+      <IconButton aria-label={sidebar ? 'Hide sidebar' : 'Show sidebar'} title={sidebar ? 'Hide sidebar' : 'Show sidebar'} onClick={() => useWorkspace.getState().updateSettings({ sidebar: !sidebar })} className="size-7">
+        {sidebar ? <PanelRightClose className="size-3.5" /> : <PanelRightOpen className="size-3.5" />}
+      </IconButton>
     </div>
   )
 }

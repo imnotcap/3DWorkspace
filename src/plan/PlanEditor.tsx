@@ -42,7 +42,8 @@ export function PlanEditor() {
   const selectedId = useWorkspace((s) => s.selectedId)
   const placing = useWorkspace((s) => s.placing)
   const openingKind = useWorkspace((s) => s.openingKind)
-  const grid = useWorkspace((s) => s.settings.grid)
+  // Snap off: the grid step becomes 1 mm (effectively free); walls and wall ends still snap.
+  const grid = useWorkspace((s) => (s.settings.snap ? s.settings.grid : 0.001))
   const thickness = useWorkspace((s) => s.settings.wallThickness)
   const frame = useWorkspace((s) => s.frame)
   const ws = useWorkspace.getState
