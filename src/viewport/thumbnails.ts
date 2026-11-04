@@ -82,7 +82,11 @@ function shoot(obj: Object3D) {
     const m = o as Mesh
     if (m.isMesh) {
       m.geometry.dispose()
-      ;(Array.isArray(m.material) ? m.material : [m.material]).forEach((x) => x.dispose())
+      // Free the textures too (GLB models carry 4K maps), not just the materials.
+      ;(Array.isArray(m.material) ? m.material : [m.material]).forEach((x) => {
+        for (const v of Object.values(x)) if ((v as { isTexture?: boolean } | null)?.isTexture) (v as { dispose: () => void }).dispose()
+        x.dispose()
+      })
     }
   })
   return url
@@ -104,6 +108,8 @@ export function thumbnail(item: CatalogItem): Promise<string> {
     /* storage unavailable */
   }
   p = (queue = queue.then(async () => {
+    // Wait for an idle moment so previews never compete with the planner.
+    await new Promise<void>((r) => ('requestIdleCallback' in window ? requestIdleCallback(() => r(), { timeout: 1500 }) : setTimeout(r, 50)))
     const url = shoot(await build(item))
     scheduleRelease()
     try {

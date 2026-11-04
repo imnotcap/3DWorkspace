@@ -222,8 +222,10 @@ class Engine {
   private configure(viewportMode: boolean) {
     const s = useWorkspace.getState().settings
     const pt = this.tracer()
-    pt.bounces = s.bounces
-    pt.renderScale = viewportMode ? 1 / this.gl.getPixelRatio() : 1
+    // The live view is a preview: half resolution (a quarter of the pixels) and at most 3 bounces,
+    // so it never saturates the GPU. Final renders use full resolution and every bounce.
+    pt.bounces = viewportMode ? Math.min(3, s.bounces) : s.bounces
+    pt.renderScale = viewportMode ? 0.5 / this.gl.getPixelRatio() : 1
   }
 
   private envKey(scene: Scene) {
@@ -295,7 +297,8 @@ class Engine {
     pt.tiles.set(1, 1)
     const max = st.viewportSamples
     if (pt.samples < max) pt.renderSample()
-    if (pt.samples < 1) this.raster(scene, camera)
+    // The first couple of samples are mostly speckle: keep the real-time image until it reads.
+    if (pt.samples < 3) this.raster(scene, camera)
     else this.presentTrace(st.denoise)
     this.overlays(scene, camera)
     this.report({ state: pt.samples >= max ? 'done' : 'sampling', samples: Math.floor(pt.samples), max })
@@ -369,6 +372,7 @@ class Engine {
 }
 
 let engine: Engine | null = null
+let nextSample = 0
 export const getEngine = () => engine
 
 /**
@@ -392,7 +396,12 @@ export function FinalRender() {
     if (e.offline) return
     const s = useWorkspace.getState()
     if (s.shading === 'rendered' && s.settings.engine === 'pathtrace') {
-      if (e.viewportTrace(scene, camera)) invalidate()
+      // One sample per ~40 ms at most: the GPU gets breathing room, so the rest of the
+      // computer (and the UI) stays responsive while the image refines.
+      if (e.viewportTrace(scene, camera)) {
+        clearTimeout(nextSample)
+        nextSample = window.setTimeout(() => invalidate(), 40)
+      }
       return
     }
     e.release()
