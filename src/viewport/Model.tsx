@@ -4,7 +4,7 @@ import { Component, memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef,
 import { Box3, Box3Helper, BufferGeometry, Color, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, Vector3, type Material, type Object3D } from 'three'
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh'
 import { objectTransformAt } from '@/lib/anim'
-import { activeProject, scaleForSize, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
+import { scaleForSize, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
 import { disposeSurface, reshade, surfaceFor } from './shading'
 
@@ -151,17 +151,16 @@ function ModelInner({ obj, selected, shading }: Props) {
   // Keyed objects follow the timeline; only they subscribe to the frame.
   const keyed = !!obj.keys?.length
   const frame = useWorkspace((s) => (keyed ? s.frame : 0))
-  const interpolation = useWorkspace((s) => activeProject(s).animation.interpolation)
   useLayoutEffect(() => {
     const g = group.current
     if (!g) return
-    const t = objectTransformAt(obj, frame, interpolation)
+    const t = objectTransformAt(obj, frame)
     g.position.fromArray(t.position)
     g.rotation.set(...t.rotation)
     g.scale.fromArray(t.scale)
     invalidate()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [obj.transform, obj.keys, frame, interpolation])
+  }, [obj.transform, obj.keys, obj.interpolation, frame])
 
   useLayoutEffect(() => {
     const g = group.current

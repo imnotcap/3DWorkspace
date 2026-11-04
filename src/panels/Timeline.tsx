@@ -3,7 +3,13 @@ import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 
 import ScrubField from '@/components/reactbits/ScrubField'
 import { actions } from '@/lib/actions'
 import { cn } from '@/lib/cn'
-import { useActiveProject, useWorkspace } from '@/store/workspace'
+import { useActiveProject, useWorkspace, type Interpolation } from '@/store/workspace'
+
+const INTERP: { id: Interpolation; label: string }[] = [
+  { id: 'ease', label: 'Smooth' },
+  { id: 'linear', label: 'Linear' },
+  { id: 'constant', label: 'Hold' },
+]
 import { Button, IconButton, Tooltip } from '@/ui/primitives'
 
 const scrubCls = '!h-6 !w-24 !text-2xs font-mono'
@@ -69,12 +75,18 @@ export function Timeline() {
   const selected = project.objects.find((o) => o.id === selectedId)
   // Track list: camera, then every animated object, plus the selected one so you can key it.
   const tracks = [
-    { id: null as string | null, name: 'Camera', keys: keys.map((k) => k.frame) },
-    ...project.objects.filter((o) => o.keys?.length || o.id === selectedId).map((o) => ({ id: o.id as string | null, name: o.name, keys: (o.keys ?? []).map((k) => k.frame) })),
+    { id: null as string | null, name: 'Camera', keys: keys.map((k) => k.frame), interp: interpolation },
+    ...project.objects
+      .filter((o) => o.keys?.length || o.id === selectedId)
+      .map((o) => ({ id: o.id as string | null, name: o.name, keys: (o.keys ?? []).map((k) => k.frame), interp: o.interpolation ?? ('ease' as Interpolation) })),
   ]
   const target = selected ? selected.name : 'Camera'
   const onKey = selected ? !!selected.keys?.some((k) => k.frame === frame) : keys.some((k) => k.frame === frame)
   const anyKeys = tracks.some((t) => t.keys.length)
+  // The blending control follows the active track: the selected object, or the camera.
+  const trackInterp: Interpolation = selected ? (selected.interpolation ?? 'ease') : interpolation
+  const setTrackInterp = (v: Interpolation) =>
+    selected ? useWorkspace.getState().commit('Interpolation', selected.id, { interpolation: v }) : updateAnimation({ interpolation: v })
 
   const scrub = (e: RPointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -112,15 +124,20 @@ export function Timeline() {
             </option>
           ))}
         </select>
-        <select
-          value={interpolation}
-          onChange={(e) => updateAnimation({ interpolation: e.target.value as 'ease' | 'linear' })}
-          aria-label="Interpolation"
-          className="h-6 appearance-none rounded-md bg-app/60 px-2 text-2xs text-fg outline-none"
-        >
-          <option value="ease" className="bg-panel-2">Ease</option>
-          <option value="linear" className="bg-panel-2">Linear</option>
-        </select>
+        <Tooltip label={`Blending between keys · ${target}`} side="top">
+          <select
+            value={trackInterp}
+            onChange={(e) => setTrackInterp(e.target.value as Interpolation)}
+            aria-label={`Interpolation for ${target}`}
+            className="h-6 appearance-none rounded-md bg-app/60 px-2 text-2xs text-fg outline-none"
+          >
+            {INTERP.map((o) => (
+              <option key={o.id} value={o.id} className="bg-panel-2">
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </Tooltip>
         <span className="ml-1 font-mono text-2xs text-faint">{((end - start + 1) / fps).toFixed(1)}s</span>
 
         <div className="flex-1" />
@@ -179,6 +196,14 @@ export function Timeline() {
             <div key={t.id ?? 'camera'} className="absolute inset-x-0 flex h-5 items-center" style={{ top: 24 + row * 22 }}>
               <span className={cn('pointer-events-none absolute left-2 z-10 w-20 truncate text-2xs', active ? 'text-fg' : 'text-faint')}>{t.name}</span>
               {active && <div className="pointer-events-none absolute inset-0 bg-white/[0.025]" />}
+              {/* Segments between keys: solid = blended, dashed = hold */}
+              {t.keys.slice(1).map((f, i) => (
+                <div
+                  key={`seg-${f}`}
+                  className={cn('pointer-events-none absolute top-1/2 h-0 -translate-y-1/2 border-t', t.interp === 'constant' ? 'border-dashed border-dim/60' : 'border-dim/40')}
+                  style={{ left: x(t.keys[i]), width: x(f) - x(t.keys[i]) }}
+                />
+              ))}
               {t.keys.map((f) => (
                 <button
                   key={f}

@@ -55,6 +55,7 @@ export function evaluate(anim: Animation, frame: number, fallback: CameraPose): 
   const a = keys[i - 1]
   const b = keys[i]
   const t = (frame - a.frame) / (b.frame - a.frame)
+  if (anim.interpolation === 'constant') return a.pose
   return lerpPose(a.pose, b.pose, anim.interpolation === 'linear' ? t : smooth(t))
 }
 

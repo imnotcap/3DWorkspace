@@ -21,7 +21,7 @@ function applyObjectsAt(frame: number) {
   for (const o of p.objects) {
     const g = viewport.objects.get(o.id)
     if (!g || !o.keys?.length) continue
-    const t = objectTransformAt(o, frame, p.animation.interpolation)
+    const t = objectTransformAt(o, frame)
     g.position.fromArray(t.position)
     g.rotation.set(...t.rotation)
     g.scale.fromArray(t.scale)

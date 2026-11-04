@@ -95,7 +95,7 @@ export const actions = {
         { frame: anim.start, transform: sel.transform },
         { frame: anim.end, transform: { ...sel.transform, rotation: [r[0], r[1] + turn, r[2]] } },
       ])
-      s.updateAnimation({ interpolation: 'linear' })
+      s.updateObject(sel.id, { interpolation: 'linear' }) // constant speed, so the loop is seamless
       s.setFrame(anim.start)
       return s.setCameraView(true)
     }

@@ -148,11 +148,10 @@ function ObjectTab() {
   const editing = useRef(false)
 
   const frame = useWorkspace((s) => s.frame)
-  const interpolation = project.animation.interpolation
 
   if (!obj) return <p className="p-3 text-xs text-dim">Nothing selected.</p>
   // Keyed objects show (and edit) their value at the current frame; edits auto-key that frame.
-  const t = objectTransformAt(obj, frame, interpolation)
+  const t = objectTransformAt(obj, frame)
   const keyed = !!obj.keys?.length
   const onKey = obj.keys?.some((k) => k.frame === frame)
   const set = (patch: Partial<typeof t>) => {

@@ -56,11 +56,15 @@ export interface CameraKey {
   pose: CameraPose
 }
 
+/** Smooth = ease in/out, Linear = constant speed, Hold = no blending (jump at each key). */
+export type Interpolation = 'ease' | 'linear' | 'constant'
+
 export interface Animation {
   fps: number
   start: number
   end: number
-  interpolation: 'ease' | 'linear'
+  /** Camera track interpolation */
+  interpolation: Interpolation
   keys: CameraKey[]
 }
 
@@ -80,6 +84,8 @@ export interface SceneObject {
   stats?: MeshStats
   /** Transform keyframes; when present they drive the object instead of `transform`. */
   keys?: ObjectKey[]
+  /** How this object's keys blend (default: smooth). */
+  interpolation?: Interpolation
   /** Scale to this real size once the mesh has loaded (from the project's spec dimensions). */
   fitSize?: RealSize | null
   error?: string
