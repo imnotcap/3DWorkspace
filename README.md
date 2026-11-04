@@ -40,11 +40,24 @@ Push to `main`. `.github/workflows/deploy.yml` builds and publishes to Pages. En
 | X / Delete | Delete |
 | F12 | Render PNG (2×, no helpers) |
 | ⌘/Ctrl + I, ⌘/Ctrl + E | Import GLB, export selected GLB |
+| ⌘/Ctrl + Z, ⇧⌘/Ctrl + Z | Undo, redo (add, delete, transforms) |
 | Shift + N | New project tab |
+
+Transform fields in the Object panel (N) are drag-to-scrub: drag to change, Shift for coarse, Alt for fine, click to type.
 
 ## Performance notes
 
 - The canvas renders **on demand** (`frameloop="demand"`), so it uses no GPU while idle.
 - The three.js and Gradio client chunks are lazy-loaded, so the shell paints first.
 - Shading modes swap shared materials instead of cloning them. The environment is procedural (no HDRI download).
-- Viewport transforms are read imperatively, not through React state.
+- The gizmo moves the three.js object directly. The store is only updated on release (one undo step).
+- Raycasting uses `three-mesh-bvh`, built in idle time: picking a 1M-triangle mesh takes about 0.1 ms.
+- Each model suspends and fails on its own. A broken file is flagged in the outliner without affecting the viewport.
+
+## Persistence
+
+Projects, meshes, transforms and input photos are saved to IndexedDB, so a reload restores your work. Settings (including the HF token) are kept in `localStorage`. Nothing leaves the browser except the images you send to the backend you picked.
+
+## Credits
+
+`src/components/reactbits/` contains ScrubField, CountUp and ShinyText from [React Bits](https://github.com/DavidHDev/react-bits) (MIT + Commons Clause, see the LICENSE in that folder).

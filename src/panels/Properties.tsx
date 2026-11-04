@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useRef } from 'react'
+import ScrubField from '@/components/reactbits/ScrubField'
 import { SPACE_PRESETS, findPreset } from '@/generation/spaces'
 import type { ProviderId, Quality } from '@/generation/types'
 import { actions } from '@/lib/actions'
-import { useActiveProject, useWorkspace, type PropertyTab } from '@/store/workspace'
-import { viewport } from '@/viewport/bridge'
+import { useActiveProject, useWorkspace, type PropertyTab, type Vec3 } from '@/store/workspace'
 import { Button, Field, Select, Slider, Toggle, inputCls } from '@/ui/primitives'
 
 const CUSTOM = '__custom'
@@ -82,43 +82,90 @@ function GenerateTab() {
   )
 }
 
-function ObjectTab() {
-  const selectedId = useWorkspace((s) => s.selectedId)
-  const project = useActiveProject()
-  const obj = project.objects.find((o) => o.id === selectedId)
-  const updateObject = useWorkspace((s) => s.updateObject)
-  const [, force] = useState(0)
+const AXES = ['x', 'y', 'z'] as const
+const AXIS_COLOR = { x: '#e5484d', y: '#46a758', z: '#3e63dd' }
+const DEG = 180 / Math.PI
 
-  // Transform readout is imperative (gizmo moves the object directly), so poll lightly while open.
-  useEffect(() => {
-    const id = setInterval(() => force((n) => n + 1), 200)
-    return () => clearInterval(id)
-  }, [])
-
-  if (!obj) return <p className="p-3 text-xs text-dim">Nothing selected.</p>
-  const o3 = viewport.objects.get(obj.id)
-  const vec = (label: string, v: { x: number; y: number; z: number } | undefined, digits = 3) => (
+/** Three React Bits ScrubFields: drag to scrub (Shift coarse, Alt fine), click to type. */
+function VecField({ label, value, onChange, onCommit, step, min, max, suffix = '' }: {
+  label: string
+  value: Vec3
+  onChange: (v: Vec3) => void
+  onCommit: () => void
+  step: number
+  min: number
+  max: number
+  suffix?: string
+}) {
+  return (
     <Field label={label}>
-      <div className="grid grid-cols-3 gap-1 font-mono text-2xs tabular">
-        {(['x', 'y', 'z'] as const).map((k) => (
-          <span key={k} className="flex h-6 items-center gap-1 rounded border border-line-strong bg-app/60 px-1.5 text-fg">
-            <span className={k === 'x' ? 'text-axis-x' : k === 'y' ? 'text-axis-y' : 'text-axis-z'}>{k.toUpperCase()}</span>
-            {(v?.[k] ?? 0).toFixed(digits)}
-          </span>
+      <div className="grid grid-cols-3 gap-1">
+        {AXES.map((k, i) => (
+          <ScrubField
+            key={k}
+            label={k.toUpperCase()}
+            suffix={suffix}
+            value={value[i]}
+            min={min}
+            max={max}
+            step={step}
+            size="sm"
+            sensitivity={3}
+            rubberReach={0}
+            showFill={false}
+            showDelta={false}
+            accent={AXIS_COLOR[k]}
+            chipColor="#0d0d0d"
+            className="!h-6.5 !w-full !gap-0 !pr-1.5 font-mono !text-2xs [&_label]:!px-1 [&_label]:![color:var(--sf-accent)]"
+            onChange={(n) => {
+              const next = [...value] as Vec3
+              next[i] = n
+              onChange(next)
+            }}
+            onCommit={onCommit}
+          />
         ))}
       </div>
     </Field>
   )
-  const deg = o3 ? { x: (o3.rotation.x * 180) / Math.PI, y: (o3.rotation.y * 180) / Math.PI, z: (o3.rotation.z * 180) / Math.PI } : undefined
+}
+
+function ObjectTab() {
+  const selectedId = useWorkspace((s) => s.selectedId)
+  const project = useActiveProject()
+  const obj = project.objects.find((o) => o.id === selectedId)
+  const { updateObject, checkpoint } = useWorkspace.getState()
+  // One undo step per scrub gesture: checkpoint on its first change, close it on commit.
+  const editing = useRef(false)
+
+  if (!obj) return <p className="p-3 text-xs text-dim">Nothing selected.</p>
+  const t = obj.transform
+  const set = (patch: Partial<typeof t>) => {
+    if (!editing.current) {
+      checkpoint('Transform')
+      editing.current = true
+    }
+    updateObject(obj.id, { transform: { ...t, ...patch } })
+  }
+  const done = () => (editing.current = false)
 
   return (
     <div className="space-y-2.5 p-3">
       <Field label="Name">
         <input className={inputCls} value={obj.name} onChange={(e) => updateObject(obj.id, { name: e.target.value })} />
       </Field>
-      {vec('Location', o3?.position)}
-      {vec('Rotation', deg, 1)}
-      {vec('Scale', o3?.scale)}
+      <VecField label="Location" value={t.position} step={0.01} min={-1000} max={1000} onChange={(position) => set({ position })} onCommit={done} />
+      <VecField
+        label="Rotation"
+        value={t.rotation.map((r) => +(r * DEG).toFixed(1)) as Vec3}
+        step={0.5}
+        min={-360}
+        max={360}
+        suffix="°"
+        onChange={(deg) => set({ rotation: deg.map((d) => d / DEG) as Vec3 })}
+        onCommit={done}
+      />
+      <VecField label="Scale" value={t.scale} step={0.01} min={0.01} max={100} onChange={(scale) => set({ scale })} onCommit={done} />
       <div className="h-px bg-line" />
       <Field label="Source">
         <span className="block truncate text-xs text-fg">{obj.source}</span>

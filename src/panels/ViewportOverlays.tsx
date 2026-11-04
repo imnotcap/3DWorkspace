@@ -1,12 +1,15 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { Aperture, Grid3x3, Hash, Layers, SlidersHorizontal, X } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { cancelGeneration } from '@/generation/run'
 import { actions } from '@/lib/actions'
 import { cn } from '@/lib/cn'
 import { useActiveProject, useWorkspace, type PropertyTab, type ShadingMode } from '@/store/workspace'
 import { Button, IconButton, Menu, Tooltip, ease } from '@/ui/primitives'
-import { PropertiesPanel } from './Properties'
+import CountUp from '@/components/reactbits/CountUp'
+import ShinyText from '@/components/reactbits/ShinyText'
+
+const PropertiesPanel = lazy(() => import('./Properties').then((m) => ({ default: m.PropertiesPanel })))
 
 /* ───────── Header pill (View / Select / Add / Object) ───────── */
 
@@ -155,7 +158,9 @@ export function ViewportSideStrip() {
                 <X className="size-3" />
               </IconButton>
             </div>
-            <PropertiesPanel tab={tab} />
+            <Suspense fallback={<div className="h-24" />}>
+              <PropertiesPanel tab={tab} />
+            </Suspense>
           </motion.div>
         )}
       </AnimatePresence>
@@ -165,26 +170,24 @@ export function ViewportSideStrip() {
 
 /* ───────── Stats (bottom-left) ───────── */
 
-const fmt = (n: number) => n.toLocaleString('en-US')
-
 export function StatsOverlay() {
   const show = useWorkspace((s) => s.settings.showStats)
   const project = useActiveProject()
   if (!show) return null
-  const visible = project.objects.filter((o) => o.visible)
+  const visible = project.objects.filter((o) => o.visible && !o.error)
   const v = visible.reduce((a, o) => a + (o.stats?.vertices ?? 0), 0)
   const t = visible.reduce((a, o) => a + (o.stats?.triangles ?? 0), 0)
-  const rows: [string, string][] = [
-    ['Objects', `${visible.length}`],
-    ['Vertices', fmt(v)],
-    ['Triangles', fmt(t)],
+  const rows: [string, number][] = [
+    ['Objects', visible.length],
+    ['Vertices', v],
+    ['Triangles', t],
   ]
   return (
     <div className="pointer-events-none absolute bottom-3 left-3 z-10 grid grid-cols-[auto_auto] gap-x-6 gap-y-0.5 font-mono text-2xs tabular">
       {rows.map(([k, val]) => (
         <div key={k} className="contents">
           <span className="text-faint">{k}</span>
-          <span className="text-dim">{val}</span>
+          <CountUp to={val} duration={0.6} separator="," trigger="load" className="text-dim" />
         </div>
       ))}
     </div>
@@ -223,7 +226,7 @@ export function JobCard() {
           {job.status === 'running' && (
             <>
               <div className="mb-2 flex items-center justify-between text-xs">
-                <span className="truncate text-fg">{job.message}</span>
+                <ShinyText text={job.message} color="#a3a3a3" shineColor="#ffffff" speed={2.4} className="truncate" />
                 <span className="ml-3 shrink-0 font-mono text-2xs tabular text-faint">{((now - job.startedAt) / 1000).toFixed(0)}s</span>
               </div>
               <div className="relative h-1 overflow-hidden rounded-full bg-app">

@@ -62,7 +62,10 @@ export function Outliner() {
                     className="min-w-0 flex-1 bg-transparent outline-none"
                   />
                 ) : (
-                  <span className="flex-1 truncate">{o.name}</span>
+                  <span className="flex-1 truncate" title={o.error}>
+                    {o.name}
+                    {o.error && <span className="ml-1.5 text-2xs text-danger">{o.error}</span>}
+                  </span>
                 )}
                 <button
                   type="button"

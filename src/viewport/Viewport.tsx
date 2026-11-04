@@ -1,6 +1,6 @@
 import { ContactShadows, GizmoHelper, GizmoViewport, Grid, OrbitControls, TransformControls } from '@react-three/drei'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AgXToneMapping,
   Box3,
@@ -18,7 +18,7 @@ import {
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import { useActiveProject, useWorkspace, type ShadingMode } from '@/store/workspace'
+import { useActiveProject, useWorkspace, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
 import { Model, withOriginalMaterials } from './Model'
 
@@ -180,6 +180,20 @@ function Bridge() {
   return null
 }
 
+const TOOL_LABEL = { translate: 'Move', rotate: 'Rotate', scale: 'Scale' } as const
+
+/** Gizmo release → one undoable store update. */
+function commitTransform(o: Object3D, tool: keyof typeof TOOL_LABEL) {
+  const id = o.userData.id as string
+  useWorkspace.getState().commit(TOOL_LABEL[tool], id, {
+    transform: {
+      position: o.position.toArray() as Vec3,
+      rotation: [o.rotation.x, o.rotation.y, o.rotation.z],
+      scale: o.scale.toArray() as Vec3,
+    },
+  })
+}
+
 function SceneContent() {
   const project = useActiveProject()
   const selectedId = useWorkspace((s) => s.selectedId)
@@ -213,11 +227,9 @@ function SceneContent() {
         shadow-camera-bottom={-4}
       />
 
-      <Suspense fallback={null}>
-        {project.objects.map((o) => (
-          <Model key={o.id} obj={o} selected={o.id === selectedId} shading={shading} />
-        ))}
-      </Suspense>
+      {project.objects.map((o) => (
+        <Model key={o.id} obj={o} selected={o.id === selectedId} shading={shading} />
+      ))}
 
       {rendered && <ContactShadows position={[0, 0.001, 0]} opacity={0.55} scale={12} blur={2.4} far={4} resolution={512} />}
 
@@ -240,7 +252,7 @@ function SceneContent() {
           </>
         )}
         {target && tool !== 'select' && (
-          <TransformControls object={target} mode={tool} size={0.8} onChange={() => invalidate()} />
+          <TransformControls object={target} mode={tool} size={0.8} onChange={() => invalidate()} onMouseUp={() => commitTransform(target, tool)} />
         )}
       </group>
     </>

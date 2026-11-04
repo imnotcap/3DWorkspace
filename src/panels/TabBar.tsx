@@ -11,6 +11,8 @@ export function TabBar() {
   const activeId = useWorkspace((s) => s.activeProjectId)
   const { setActiveProject, closeProject, addProject, renameProject } = useWorkspace.getState()
   const job = useWorkspace((s) => s.job)
+  const undoLabel = useWorkspace((s) => s.past.at(-1)?.label)
+  const redoLabel = useWorkspace((s) => s.future.at(-1)?.label)
   const [editing, setEditing] = useState<string | null>(null)
 
   return (
@@ -20,6 +22,9 @@ export function TabBar() {
         className="h-7 px-1.5"
         items={[
           { label: 'New Project', shortcut: '⇧N', onSelect: addProject },
+          { separator: true, label: '' },
+          { label: undoLabel ? `Undo ${undoLabel}` : 'Undo', shortcut: '⌘Z', onSelect: useWorkspace.getState().undo, disabled: !undoLabel },
+          { label: redoLabel ? `Redo ${redoLabel}` : 'Redo', shortcut: '⇧⌘Z', onSelect: useWorkspace.getState().redo, disabled: !redoLabel },
           { separator: true, label: '' },
           { label: 'Import GLB…', shortcut: '⌘I', onSelect: actions.importGlb },
           { label: 'Add Images…', onSelect: actions.addImages },

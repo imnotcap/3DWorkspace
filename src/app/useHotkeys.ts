@@ -12,6 +12,8 @@ export function useHotkeys() {
       const mod = e.metaKey || e.ctrlKey
       const key = e.key.toLowerCase()
 
+      if (mod && key === 'z') return e.preventDefault(), e.shiftKey ? s.redo() : s.undo()
+      if (mod && key === 'y') return e.preventDefault(), s.redo()
       if (mod && key === 'i') return e.preventDefault(), actions.importGlb()
       if (mod && key === 'e') return e.preventDefault(), void actions.exportSelected()
       if (mod) return
