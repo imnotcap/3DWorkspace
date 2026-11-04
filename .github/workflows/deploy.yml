@@ -24,9 +24,14 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # CC0 PBR textures from ambientCG; on failure the app uses procedural textures.
+      - run: npm run textures
+        continue-on-error: true
       - run: npm run build
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
+      # The site must never contain an API key: each visitor uses their own.
+      - run: npm run check:secrets
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

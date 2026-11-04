@@ -1,8 +1,19 @@
 import { importModelFiles, startGeneration } from '@/generation/run'
-import { activeProject, useWorkspace, type ShadingMode } from '@/store/workspace'
+import { activeProject, useWorkspace, type ShadingMode, type Transform, type Vec3 } from '@/store/workspace'
 import { download, viewport } from '@/viewport/bridge'
 
 let renderAbort: AbortController | null = null
+
+/** The selected object's transform as shown right now (gizmo edits included). */
+function selectedTransform(): { id: string; transform: Transform } | null {
+  const s = useWorkspace.getState()
+  const o = s.selectedId ? viewport.objects.get(s.selectedId) : undefined
+  if (!o || !s.selectedId) return null
+  return {
+    id: s.selectedId,
+    transform: { position: o.position.toArray() as Vec3, rotation: [o.rotation.x, o.rotation.y, o.rotation.z], scale: o.scale.toArray() as Vec3 },
+  }
+}
 const ws = () => useWorkspace.getState()
 const project = () => activeProject(ws())
 const fileBase = () => project().name.replace(/[^\w.-]+/g, '_') || 'render'
@@ -54,29 +65,45 @@ export const actions = {
 
   /* ───── Animation ───── */
 
+  /** Blender's I: keys the selected object's transform, or the camera when nothing is selected. */
   insertKey() {
     const s = ws()
-    // In camera view the camera may already be the evaluated pose; outside it, the free view is captured.
+    const t = selectedTransform()
+    if (t) return s.setObjectKey(t.id, s.frame, t.transform)
     const pose = viewport.viewPose()
     if (pose) s.setKey(s.frame, { ...pose, focal: viewport.renderPose(s.frame)?.focal ?? pose.focal })
   },
 
   deleteKey() {
     const s = ws()
+    const obj = project().objects.find((o) => o.id === s.selectedId)
+    if (obj) return s.removeObjectKey(obj.id, s.frame)
     s.removeKey(s.frame)
   },
 
-  /** 360° orbit around the current shot, constant speed, seamless loop. */
+  /** Seamless 360° loop: spins the selected object, or orbits the camera when nothing is selected. */
   turntable() {
     const s = ws()
     const anim = project().animation
+    const span = anim.end - anim.start
+    // Last frame stops one step short of 360° so the loop doesn't repeat a frame.
+    const turn = (Math.PI * 2 * span) / (span + 1)
+    const sel = selectedTransform()
+    if (sel) {
+      const r = sel.transform.rotation
+      s.setObjectKeys(sel.id, [
+        { frame: anim.start, transform: sel.transform },
+        { frame: anim.end, transform: { ...sel.transform, rotation: [r[0], r[1] + turn, r[2]] } },
+      ])
+      s.updateObject(sel.id, { interpolation: 'linear' }) // constant speed, so the loop is seamless
+      s.setFrame(anim.start)
+      return s.setCameraView(true)
+    }
     const shot = viewport.renderPose(anim.start)
     if (!shot) return
     // Auto-framed shots are fitted for one angle; widen so no angle of the orbit clips.
     const base = project().camera ? shot : { ...shot, radius: viewport.orbitRadius(shot) ?? shot.radius }
-    const span = anim.end - anim.start
-    // Last frame stops one step short of 360° so the loop doesn't repeat a frame.
-    const end = { ...base, azimuth: base.azimuth + (Math.PI * 2 * span) / (span + 1) }
+    const end = { ...base, azimuth: base.azimuth + turn }
     s.updateAnimation({ interpolation: 'linear', keys: [{ frame: anim.start, pose: base }, { frame: anim.end, pose: end }] })
     s.setFrame(anim.start)
     s.setCameraView(true)

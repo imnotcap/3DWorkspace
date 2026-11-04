@@ -1,4 +1,7 @@
-import { BufferAttribute, BufferGeometry, MathUtils, MeshPhysicalMaterial, MeshStandardMaterial, type InterleavedBufferAttribute, type Material, type Mesh } from 'three'
+import { BufferAttribute, BufferGeometry, MathUtils, MeshPhysicalMaterial, MeshStandardMaterial, type InterleavedBufferAttribute, type Material, type Texture } from 'three'
+import { detailTexture } from './detailTextures'
+import { presetById } from './materialPresets'
+import { pbrSet } from './pbrTextures'
 import type { MaterialOverride, ShadeMode } from '@/store/workspace'
 import type { PackedAttr, ShadeRequest, ShadeResponse } from './shade.worker'
 
@@ -52,26 +55,67 @@ export function reshade(geometry: BufferGeometry, mode: Exclude<ShadeMode, 'orig
 
 /* ───────── Material overrides ───────── */
 
-/** Per-mesh surface material: the generated one, or a tinted/replaced copy. */
-export function surfaceFor(original: Material, o: MaterialOverride | null): Material {
+/**
+ * Surface material for one material slot: the generated material, or the user's override.
+ * Library presets get physical properties at once, a procedural texture as a placeholder,
+ * and the real ambientCG maps as soon as they have loaded (`onUpgrade` re-renders).
+ */
+export function surfaceFor(original: Material, o: MaterialOverride | null, opts: { metric?: boolean; onUpgrade?: () => void } = {}): Material {
   if (!o) return original
+  const preset = presetById(o.preset)
   const base = original as MeshStandardMaterial
-  const m = base.isMeshStandardMaterial ? (base.clone() as MeshStandardMaterial) : new MeshPhysicalMaterial()
+  const physical = !!(preset?.clearcoat || preset?.transmission || preset?.sheen)
+  const m: MeshStandardMaterial | MeshPhysicalMaterial = physical ? new MeshPhysicalMaterial() : base.isMeshStandardMaterial ? (base.clone() as MeshStandardMaterial) : new MeshStandardMaterial()
+  if (physical && base.isMeshStandardMaterial && o.keepTexture) m.map = base.map
+  m.name = preset?.name ?? base.name
   m.color.set(o.color)
   m.roughness = o.roughness
   m.metalness = o.metalness
-  if (!o.keepTexture) {
+  if (!o.keepTexture || preset?.texture) {
     m.map = null
+    m.normalMap = null
     m.roughnessMap = null
     m.metalnessMap = null
+    m.aoMap = null
     m.vertexColors = false
+  }
+  if (m instanceof MeshPhysicalMaterial && preset) {
+    m.clearcoat = preset.clearcoat ?? 0
+    m.clearcoatRoughness = 0.08
+    m.transmission = preset.transmission ?? 0
+    m.ior = preset.ior ?? 1.5
+    m.thickness = preset.transmission ? 0.01 : 0
+    m.sheen = preset.sheen ?? 0
+    m.sheenRoughness = 0.8
+    m.sheenColor.set(o.color)
+  }
+  // Metric UVs (Claude parts): one repeat per `tile` metres. Other meshes: one repeat per UV unit.
+  const repeat = (tile: number) => (opts.metric ? 1 / tile : 1)
+  if (preset?.texture) {
+    const t = detailTexture(preset.texture).clone()
+    t.repeat.setScalar(repeat(1))
+    m.map = t
+    void pbrSet(preset.id).then((set) => {
+      if (!set) return
+      const r = repeat(set.tile)
+      const tex = (x?: Texture) => {
+        if (!x) return null
+        const c = x.clone()
+        c.repeat.setScalar(r)
+        return c
+      }
+      m.map = tex(set.map)
+      m.normalMap = tex(set.normalMap)
+      m.roughnessMap = tex(set.roughnessMap)
+      m.metalnessMap = tex(set.metalnessMap)
+      m.aoMap = tex(set.aoMap)
+      // Real colour maps already carry their colour: show them untinted unless the user picked a colour.
+      if (o.color.toLowerCase() === preset.color.toLowerCase()) m.color.set('#ffffff')
+      m.needsUpdate = true
+      opts.onUpgrade?.()
+    })
   }
   m.needsUpdate = true
   m.userData.override = true
   return m
-}
-
-export function disposeSurface(mesh: Mesh) {
-  const s = mesh.userData.surface as Material | undefined
-  if (s?.userData.override) s.dispose()
 }

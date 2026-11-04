@@ -3,9 +3,10 @@ import { invalidate, type ThreeEvent } from '@react-three/fiber'
 import { Component, memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
 import { Box3, Box3Helper, BufferGeometry, Color, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, Vector3, type Material, type Object3D } from 'three'
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh'
+import { objectTransformAt } from '@/lib/anim'
 import { scaleForSize, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
-import { disposeSurface, reshade, surfaceFor } from './shading'
+import { reshade, surfaceFor } from './shading'
 
 // BVH-accelerated raycasting: picking a 1M-triangle mesh stays sub-millisecond.
 BufferGeometry.prototype.computeBoundsTree = computeBoundsTree
@@ -36,28 +37,45 @@ function ModelInner({ obj, selected, shading }: Props) {
   const group = useRef<Group>(null)
 
   // Normalise once per load: fit into FIT_SIZE units, centre on XZ, rest on the grid.
+  // Exact models (built at real size) keep their metres; others are fitted to FIT_SIZE.
+  const exact = !!obj.exact
   const { root, box } = useMemo(() => {
     const root = gltf.scene.clone(true)
     const v = new Vector3()
     const box = new Box3().setFromObject(root)
-    const max = Math.max(...box.getSize(v).toArray()) || 1
-    root.scale.multiplyScalar(FIT_SIZE / max)
-    root.updateMatrixWorld(true)
-    box.setFromObject(root)
+    if (!exact) {
+      const max = Math.max(...box.getSize(v).toArray()) || 1
+      root.scale.multiplyScalar(FIT_SIZE / max)
+      root.updateMatrixWorld(true)
+      box.setFromObject(root)
+    }
     const c = box.getCenter(v)
     root.position.set(-c.x, -box.min.y, -c.z)
     root.updateMatrixWorld(true)
     box.setFromObject(root)
+    // Material slots: one per distinct generated material, named after it (Blender-style).
+    const slotOf = new Map<string, string>()
+    const used = new Set<string>()
     root.traverse((o) => {
       const m = o as Mesh
       if (!m.isMesh) return
+      const mat = (Array.isArray(m.material) ? m.material[0] : m.material) as Material
+      let key = slotOf.get(mat.uuid)
+      if (!key) {
+        const baseName = mat.name || 'Surface'
+        key = baseName
+        for (let i = 2; used.has(key); i++) key = `${baseName} ${i}`
+        used.add(key)
+        slotOf.set(mat.uuid, key)
+      }
+      m.userData.slot = key
       m.userData.original = m.material
       m.userData.surface = m.material
       m.userData.geos = { original: m.geometry }
       m.castShadow = m.receiveShadow = true
     })
     return { root, box }
-  }, [gltf])
+  }, [gltf, exact])
 
   // Build BVHs when the main thread is idle, so loading never hitches.
   useEffect(() => {
@@ -94,8 +112,16 @@ function ModelInner({ obj, selected, shading }: Props) {
       triangles += (m.geometry.index ? m.geometry.index.count : pos.count) / 3
     })
     const size = box.getSize(new Vector3()).toArray() as Vec3
+    const surfaces = new Map<string, string>()
+    root.traverse((o) => {
+      const m = o as Mesh
+      if (m.isMesh && !surfaces.has(m.userData.slot)) {
+        const c = (m.userData.original as MeshStandardMaterial).color
+        surfaces.set(m.userData.slot, c ? `#${c.getHexString()}` : '#bcbcbc')
+      }
+    })
     const st = useWorkspace.getState()
-    st.updateObject(obj.id, { stats: { vertices, triangles: Math.round(triangles), meshes, size } })
+    st.updateObject(obj.id, { stats: { vertices, triangles: Math.round(triangles), meshes, size, surfaces: [...surfaces].map(([key, color]) => ({ key, color })) } })
     // Spec dimensions requested at generation time: apply once, now that the real bounds are known.
     const current = st.projects.flatMap((p) => p.objects).find((o) => o.id === obj.id)
     if (current?.fitSize) {
@@ -103,18 +129,27 @@ function ModelInner({ obj, selected, shading }: Props) {
     }
   }, [root, box, obj.id])
 
-  // Surface = generated material, or the user's override. Viewport shading picks what's displayed.
-  const override = obj.material
+  // Surface per slot = generated material, or the user's override (per surface, else whole-object).
+  // Built once per slot and shared by its meshes; viewport shading picks what's displayed.
+  const whole = obj.material
+  const surfaceOverrides = obj.surfaces
   useLayoutEffect(() => {
+    const built = new Map<string, Material>()
     root.traverse((o) => {
       const m = o as Mesh
       if (!m.isMesh) return
-      disposeSurface(m)
-      m.userData.surface = surfaceFor(m.userData.original, override)
-      m.material = materialFor(shading, m.userData.surface)
+      const slot = m.userData.slot as string
+      let s = built.get(slot)
+      if (!s) {
+        s = surfaceFor(m.userData.original, surfaceOverrides?.[slot] ?? whole, { metric: exact, onUpgrade: () => invalidate() })
+        built.set(slot, s)
+      }
+      m.userData.surface = s
+      m.material = materialFor(shading, s)
     })
     invalidate()
-  }, [root, shading, override])
+    return () => built.forEach((s) => s.userData.override && s.dispose())
+  }, [root, shading, whole, surfaceOverrides, exact])
 
   // Shade Smooth / Auto Smooth: normals rebuilt in a worker, cached per mode.
   const shade = obj.shade
@@ -147,15 +182,19 @@ function ModelInner({ obj, selected, shading }: Props) {
   }, [root, shade])
 
   // Store → Object3D. The gizmo writes the Object3D directly while dragging and commits on release.
-  const { position, rotation, scale } = obj.transform
+  // Keyed objects follow the timeline; only they subscribe to the frame.
+  const keyed = !!obj.keys?.length
+  const frame = useWorkspace((s) => (keyed ? s.frame : 0))
   useLayoutEffect(() => {
     const g = group.current
     if (!g) return
-    g.position.fromArray(position)
-    g.rotation.set(...rotation)
-    g.scale.fromArray(scale)
+    const t = objectTransformAt(obj, frame)
+    g.position.fromArray(t.position)
+    g.rotation.set(...t.rotation)
+    g.scale.fromArray(t.scale)
     invalidate()
-  }, [position, rotation, scale])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [obj.transform, obj.keys, obj.interpolation, frame])
 
   useLayoutEffect(() => {
     const g = group.current

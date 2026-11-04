@@ -18,7 +18,7 @@ import {
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import { useActiveProject, useWorkspace, type ShadingMode, type Vec3 } from '@/store/workspace'
+import { activeProject, useActiveProject, useWorkspace, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
 import { Model, withOriginalMaterials } from './Model'
 import { CameraView, RenderBridge } from './RenderSystem'
@@ -171,13 +171,12 @@ const TOOL_LABEL = { translate: 'Move', rotate: 'Rotate', scale: 'Scale' } as co
 /** Gizmo release → one undoable store update. */
 function commitTransform(o: Object3D, tool: keyof typeof TOOL_LABEL) {
   const id = o.userData.id as string
-  useWorkspace.getState().commit(TOOL_LABEL[tool], id, {
-    transform: {
-      position: o.position.toArray() as Vec3,
-      rotation: [o.rotation.x, o.rotation.y, o.rotation.z],
-      scale: o.scale.toArray() as Vec3,
-    },
-  })
+  const s = useWorkspace.getState()
+  const transform = { position: o.position.toArray() as Vec3, rotation: [o.rotation.x, o.rotation.y, o.rotation.z] as Vec3, scale: o.scale.toArray() as Vec3 }
+  const obj = activeProject(s).objects.find((x) => x.id === id)
+  // Animated objects auto-key: the edit becomes a keyframe at the current frame.
+  if (obj?.keys?.length) s.setObjectKey(id, s.frame, transform, TOOL_LABEL[tool])
+  else s.commit(TOOL_LABEL[tool], id, { transform })
 }
 
 function SceneContent() {

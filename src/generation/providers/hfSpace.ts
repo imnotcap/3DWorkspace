@@ -123,8 +123,11 @@ function findModelUrl(data: unknown): string | undefined {
   return urls.find((u) => /textured|texture/i.test(u)) ?? urls[0]
 }
 
+const QUOTA_HINT = 'Free GPU quota reached. Add a free Hugging Face token in Generate settings, lower Quality, or try again later.'
+
 async function run(client: Client, endpoint: string, payload: Record<string, unknown>, opts: GenerateOptions, label: string) {
   const job = client.submit(endpoint, payload)
+  let lastLog = ''
   const abort = () => void job.cancel()
   opts.signal.addEventListener('abort', abort, { once: true })
   try {
@@ -133,8 +136,8 @@ async function run(client: Client, endpoint: string, payload: Record<string, unk
       if (msg.type === 'status') {
         const s = msg as unknown as Status
         if (s.stage === 'error') {
-          const m = typeof s.message === 'string' ? s.message : 'The Space returned an error.'
-          throw new GenerationError(m, /quota|GPU/i.test(m) ? 'Free GPU quota reached. Add a Hugging Face token, or duplicate the Space.' : undefined)
+          const m = (typeof s.message === 'string' && s.message) || lastLog || 'The Space returned an error.'
+          throw new GenerationError(m, /quota|gpu|zerogpu/i.test(m) ? QUOTA_HINT : s.broken ? 'Lost the connection to the Space. Try again.' : undefined)
         }
         if (s.stage === 'pending') {
           opts.onProgress({ stage: 'queued', message: s.position != null ? `Queued · position ${s.position + 1}` : 'Queued', queuePosition: s.position, etaSeconds: s.eta })
@@ -143,6 +146,9 @@ async function run(client: Client, endpoint: string, payload: Record<string, unk
           const progress = pd?.index != null && pd.length ? pd.index / pd.length : undefined
           opts.onProgress({ stage: 'processing', message: pd?.desc ?? label, progress, etaSeconds: s.eta })
         }
+      } else if (msg.type === 'log') {
+        const l = msg as unknown as { log: string; level: string }
+        if (l.level === 'warning' || l.level === 'error') lastLog = l.log
       } else if (msg.type === 'data') {
         return (msg as { data: unknown }).data
       }
@@ -150,7 +156,8 @@ async function run(client: Client, endpoint: string, payload: Record<string, unk
   } finally {
     opts.signal.removeEventListener('abort', abort)
   }
-  throw new GenerationError('The Space closed the connection without a result.')
+  // A job that ends with success=false and no error text closes the stream silently (ZeroGPU aborts do this).
+  throw new GenerationError(lastLog || 'The Space stopped without returning a result.', /quota|gpu/i.test(lastLog) || !lastLog ? QUOTA_HINT : undefined)
 }
 
 export function createHfSpaceProvider(settings: HfSpaceSettings): Provider {
@@ -166,7 +173,9 @@ export function createHfSpaceProvider(settings: HfSpaceSettings): Provider {
       opts.onProgress({ stage: 'connecting', message: `Connecting to ${settings.spaceId}` })
       let client: Client
       try {
-        client = await Client.connect(settings.spaceId, token ? { token } : {})
+        // The client publishes only 'data' events by default; without 'status' every Space error,
+        // queue position and progress update is silently dropped.
+        client = await Client.connect(settings.spaceId, { events: ['data', 'status', 'log'], ...(token ? { token } : {}) })
       } catch (e) {
         throw new GenerationError(`Could not reach ${settings.spaceId}.`, 'The Space may be sleeping, renamed, or private. Check the id or try again in a minute.')
       }

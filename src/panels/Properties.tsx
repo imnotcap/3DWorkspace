@@ -1,11 +1,12 @@
-import { Lock, Unlock } from 'lucide-react'
+import { Diamond, Lock, Unlock } from 'lucide-react'
+import { objectTransformAt } from '@/lib/anim'
 import { useRef, useState } from 'react'
 import ScrubField from '@/components/reactbits/ScrubField'
 import { SPACE_PRESETS, findPreset } from '@/generation/spaces'
 import type { ProviderId, Quality } from '@/generation/types'
 import { actions } from '@/lib/actions'
-import { scaleForSize, useActiveProject, useWorkspace, type MaterialOverride, type PropertyTab, type RealSize, type SceneObject, type ShadeMode, type Vec3 } from '@/store/workspace'
-import { MATERIAL_PRESETS } from '@/viewport/materialPresets'
+import { scaleForSize, useActiveProject, useWorkspace, type PropertyTab, type RealSize, type SceneObject, type ShadeMode, type Vec3 } from '@/store/workspace'
+import { MaterialsSection } from './MaterialsSection'
 import { Button, Field, Select, Slider, Toggle, inputCls } from '@/ui/primitives'
 
 const CUSTOM = '__custom'
@@ -24,6 +25,7 @@ function GenerateTab() {
           options={[
             { value: 'hf-space', label: 'Hugging Face Space' },
             { value: 'local-worker', label: 'Local GPU worker' },
+            { value: 'claude-parts', label: 'Parts · Claude (exact)' },
             { value: 'photogrammetry', label: 'Photogrammetry · exact' },
           ]}
         />
@@ -46,6 +48,28 @@ function GenerateTab() {
           <Field label="HF token" hint="Optional. Raises your free GPU quota. Stored only in this browser.">
             <input className={inputCls} type="password" placeholder="hf_…" value={s.hfToken} onChange={(e) => update({ hfToken: e.target.value })} autoComplete="off" />
           </Field>
+        </>
+      ) : s.providerId === 'claude-parts' ? (
+        <>
+          <Field label="API key" hint="From console.anthropic.com (your team's org). Stored only in this browser; sent only to api.anthropic.com.">
+            <input className={inputCls} type="password" placeholder="sk-ant-…" value={s.anthropicKey} onChange={(e) => update({ anthropicKey: e.target.value })} autoComplete="off" />
+          </Field>
+          <Field label="Model">
+            <Select
+              value={s.claudeModel}
+              onChange={(claudeModel) => update({ claudeModel })}
+              options={[
+                { value: 'claude-opus-5-5', label: 'Claude Opus 5.5 · most accurate' },
+                { value: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 · faster, half the price' },
+              ]}
+            />
+          </Field>
+          <Field label="Self-check" hint="Renders the result from the photo's angle and has Claude correct it. About twice the cost, noticeably more accurate.">
+            <Toggle checked={s.claudeSelfCheck} onChange={(claudeSelfCheck) => update({ claudeSelfCheck })} />
+          </Field>
+          <p className="ml-[100px] text-2xs leading-snug text-faint">
+            Builds hard-surface products (furniture, cases, appliances) from exact parts at real size, with materials. Typically ≈$0.20–0.80 per model on Opus 5.5. If Claude declines a request, it is retried on a fallback model automatically.
+          </p>
         </>
       ) : s.providerId === 'photogrammetry' ? (
         <Field label="Worker URL" hint="Measures the real object from 30–80 photos taken all around it. Runs on any computer (CPU). Set Real size for exact scale.">
@@ -86,7 +110,43 @@ function GenerateTab() {
           }}
         />
       </Field>
+
+      <div className="h-px bg-line" />
+      <KeysSection />
     </div>
+  )
+}
+
+/** This site has no keys of its own: every visitor brings theirs, kept in their browser only. */
+function KeysSection() {
+  const s = useWorkspace((st) => st.settings)
+  const update = useWorkspace((st) => st.updateSettings)
+  const forgetKeys = useWorkspace((st) => st.forgetKeys)
+  const hasKeys = !!(s.hfToken || s.anthropicKey)
+  return (
+    <>
+      <Field
+        label="Your keys"
+        hint={
+          s.rememberKeys
+            ? 'Saved in this browser on this device. Anyone using this browser profile can use them.'
+            : 'Kept in memory only: gone when you close or reload the tab.'
+        }
+      >
+        <label className="flex items-center gap-2 text-xs text-dim">
+          <Toggle checked={s.rememberKeys} onChange={(rememberKeys) => update({ rememberKeys })} />
+          Remember on this device
+        </label>
+      </Field>
+      <p className="ml-[100px] text-2xs leading-snug text-faint">
+        This site has no API keys of its own. Your keys are sent only to the service they belong to (Hugging Face or Anthropic), never to this site, and aren't saved with projects or exports.
+      </p>
+      {hasKeys && (
+        <Button variant="ghost" className="ml-[100px] h-6 px-2" onClick={forgetKeys}>
+          Forget my keys
+        </Button>
+      )}
+    </>
   )
 }
 
@@ -146,14 +206,21 @@ function ObjectTab() {
   // One undo step per scrub gesture: checkpoint on its first change, close it on commit.
   const editing = useRef(false)
 
+  const frame = useWorkspace((s) => s.frame)
+
   if (!obj) return <p className="p-3 text-xs text-dim">Nothing selected.</p>
-  const t = obj.transform
+  // Keyed objects show (and edit) their value at the current frame; edits auto-key that frame.
+  const t = objectTransformAt(obj, frame)
+  const keyed = !!obj.keys?.length
+  const onKey = obj.keys?.some((k) => k.frame === frame)
   const set = (patch: Partial<typeof t>) => {
     if (!editing.current) {
       checkpoint('Transform')
       editing.current = true
     }
-    updateObject(obj.id, { transform: { ...t, ...patch } })
+    const transform = { ...t, ...patch }
+    if (keyed) updateObject(obj.id, { transform, keys: [...obj.keys!.filter((k) => k.frame !== frame), { frame, transform }].sort((a, b) => a.frame - b.frame) })
+    else updateObject(obj.id, { transform })
   }
   const done = () => (editing.current = false)
 
@@ -161,6 +228,19 @@ function ObjectTab() {
     <div className="space-y-2.5 p-3">
       <Field label="Name">
         <input className={inputCls} value={obj.name} onChange={(e) => updateObject(obj.id, { name: e.target.value })} />
+      </Field>
+      <Field label="Animation" hint={keyed ? 'Moving, rotating or scaling now updates the key at this frame.' : 'Press I to key location, rotation and scale at this frame.'}>
+        <div className="flex items-center gap-1.5">
+          <Button className="h-6 gap-1.5 px-2" onClick={onKey ? actions.deleteKey : actions.insertKey}>
+            <Diamond className={onKey ? 'size-3 fill-warn text-warn' : 'size-3'} />
+            {onKey ? `Remove key · ${frame}` : `Key frame ${frame}`}
+          </Button>
+          {keyed && (
+            <Button variant="ghost" className="h-6 px-2" onClick={() => useWorkspace.getState().setObjectKeys(obj.id, [])}>
+              Clear ({obj.keys!.length})
+            </Button>
+          )}
+        </div>
       </Field>
       <VecField label="Location" value={t.position} step={0.01} min={-1000} max={1000} onChange={(position) => set({ position })} onCommit={done} />
       <VecField
@@ -196,7 +276,8 @@ function ObjectTab() {
           ]}
         />
       </Field>
-      <MaterialSection obj={obj} />
+      <MaterialsSection obj={obj} />
+      {obj.spec != null && <RefineSection obj={obj} />}
       <div className="h-px bg-line" />
       <Field label="Source">
         <span className="block truncate text-xs text-fg">{obj.source}</span>
@@ -366,50 +447,46 @@ function DimensionsField({ base, scale, realSize, onChange, onCommit, onApply }:
   )
 }
 
-function MaterialSection({ obj }: { obj: SceneObject }) {
-  const commit = useWorkspace((s) => s.commit)
-  const update = useWorkspace((s) => s.updateObject)
-  const m = obj.material
-  const base: MaterialOverride = m ?? { color: '#bcbcbc', roughness: 0.5, metalness: 0, keepTexture: true }
-  const set = (patch: Partial<MaterialOverride>, undoable = false) =>
-    undoable ? commit('Material', obj.id, { material: { ...base, ...patch } }) : update(obj.id, { material: { ...base, ...patch } })
-
+/** Claude parts objects: describe a change in words, Claude edits the parts. */
+function RefineSection({ obj }: { obj: SceneObject }) {
+  const [text, setText] = useState('')
+  const running = useWorkspace((s) => s.job.status === 'running')
+  const spec = obj.spec as { parts?: unknown[]; assumptions?: string[] }
+  const [showAssumptions, setShowAssumptions] = useState(false)
+  const submit = async () => {
+    const { refineObject } = await import('@/generation/run')
+    await refineObject(obj.id, text)
+    setText('')
+  }
   return (
     <>
-      <Field label="Material">
-        <Select
-          value={m ? 'custom' : 'generated'}
-          onChange={(v) => {
-            if (v === 'generated') return commit('Material', obj.id, { material: null })
-            const p = MATERIAL_PRESETS.find((x) => x.name === v)
-            if (p) commit('Material', obj.id, { material: { ...p.m, keepTexture: false } })
-            else set({}, true)
-          }}
-          options={[
-            { value: 'generated', label: 'As generated' },
-            { value: 'custom', label: 'Custom' },
-            ...MATERIAL_PRESETS.map((p) => ({ value: p.name, label: p.name })),
-          ]}
+      <div className="h-px bg-line" />
+      <Field label="Refine" hint={`${spec.parts?.length ?? 0} parts. Describe what's wrong, e.g. "legs are square 6×6 cm, the top is 2.5 cm thick".`}>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => (e.metaKey || e.ctrlKey) && e.key === 'Enter' && text.trim() && !running && submit()}
+          rows={3}
+          placeholder="What should change?"
+          className={`${inputCls} h-auto resize-none py-1.5 leading-snug`}
         />
       </Field>
-      {m && (
-        <>
-          <Field label="Base color">
-            <div className="flex items-center gap-1.5">
-              <input type="color" value={m.color} onChange={(e) => set({ color: e.target.value })} className="h-6.5 w-9 cursor-pointer rounded-md border border-line-strong bg-transparent p-0.5" />
-              <input className={inputCls} value={m.color} onChange={(e) => /^#[0-9a-f]{6}$/i.test(e.target.value) && set({ color: e.target.value })} />
-            </div>
-          </Field>
-          <Field label="Roughness">
-            <Slider value={m.roughness} min={0} max={1} onChange={(roughness) => set({ roughness })} />
-          </Field>
-          <Field label="Metallic">
-            <Slider value={m.metalness} min={0} max={1} onChange={(metalness) => set({ metalness })} />
-          </Field>
-          <Field label="Keep texture" hint="Tint the generated texture instead of replacing it.">
-            <Toggle checked={m.keepTexture} onChange={(keepTexture) => set({ keepTexture }, true)} />
-          </Field>
-        </>
+      <div className="ml-[100px] flex items-center gap-1.5">
+        <Button variant="primary" className="h-6.5 whitespace-nowrap px-3" disabled={!text.trim() || running} onClick={submit}>
+          {running ? 'Working…' : 'Refine with Claude'}
+        </Button>
+        {!!spec.assumptions?.length && (
+          <Button variant="ghost" className="h-6.5 px-2" onClick={() => setShowAssumptions(!showAssumptions)}>
+            Assumptions ({spec.assumptions.length})
+          </Button>
+        )}
+      </div>
+      {showAssumptions && (
+        <ul className="ml-[100px] list-disc space-y-0.5 pl-4 text-2xs leading-snug text-dim">
+          {spec.assumptions!.map((a, i) => (
+            <li key={i}>{a}</li>
+          ))}
+        </ul>
       )}
     </>
   )

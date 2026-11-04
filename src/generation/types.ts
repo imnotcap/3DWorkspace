@@ -9,6 +9,8 @@ export type Quality = 'draft' | 'standard' | 'high' | 'ultra'
 
 export interface GenerateInput {
   images: { blob: Blob; view: ViewTag }[]
+  /** Spec-sheet dimensions in metres, when the user gave them */
+  realSize?: { x?: number; y?: number; z?: number } | null
   quality: Quality
   removeBackground: boolean
   /** undefined = random */
@@ -33,6 +35,14 @@ export interface GenerateResult {
   glb: Blob
   /** Human-readable source, e.g. "tencent/Hunyuan3D-2mv" */
   source: string
+  /** Built at real size in metres: skip the viewport's normalise-to-2m step. */
+  exact?: boolean
+  /** Parts description (Claude parts), kept so the model can be refined later. */
+  spec?: unknown
+  costUsd?: number
+  warnings?: string[]
+  /** Estimated camera angle of the Front photo, used for the default render camera. */
+  photoView?: { azimuth_deg: number; elevation_deg: number }
 }
 
 /** Every backend (HF Space, local worker, paid API) implements this. */
@@ -42,7 +52,7 @@ export interface Provider {
   generate(input: GenerateInput, opts: GenerateOptions): Promise<GenerateResult>
 }
 
-export type ProviderId = 'hf-space' | 'local-worker' | 'photogrammetry'
+export type ProviderId = 'hf-space' | 'local-worker' | 'photogrammetry' | 'claude-parts'
 
 export class GenerationError extends Error {
   constructor(

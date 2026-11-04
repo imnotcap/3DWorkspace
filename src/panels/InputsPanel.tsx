@@ -25,13 +25,15 @@ export function InputsPanel() {
   const running = job.status === 'running'
   const preset = settings.providerId === 'hf-space' ? findPreset(settings.spaceId) : undefined
   const scan = settings.providerId === 'photogrammetry'
+  // Claude reads every photo: full views for proportions, detail shots for small parts.
+  const claude = settings.providerId === 'claude-parts'
   const multiView = settings.providerId === 'local-worker' || !preset || preset.multiView
   const hasFront = project.images.some((i) => i.view === 'front')
   const hasDetail = project.images.some((i) => i.view === 'detail')
   const unusedSides = !multiView && project.images.some((i) => i.view !== 'front' && i.view !== 'detail')
 
   // Which images will actually be sent: Front always; sides only for multi-view models.
-  const used = (v: ViewTag) => scan || v === 'front' || (multiView && v !== 'detail')
+  const used = (v: ViewTag) => scan || claude || v === 'front' || (multiView && v !== 'detail')
   const canGenerate = scan ? project.images.length >= 3 : hasFront
 
   return (
@@ -126,8 +128,9 @@ export function InputsPanel() {
           ) : (
             <>
               {project.images.length > 0 && !hasFront && <p className="text-warn">Tag one image as Front: a full view of the whole object.</p>}
-              {hasDetail && <p>Detail shots stay as reference and aren't used for geometry. Tag an image Back/Left/Right only if it shows the whole object from that side.</p>}
-              {unusedSides && <p>{preset?.label} uses the Front image only. Choose Hunyuan3D-2mv to use side views too.</p>}
+              {hasDetail && !claude && <p>Detail shots stay as reference and aren't used for geometry. Tag an image Back/Left/Right only if it shows the whole object from that side.</p>}
+              {claude && <p>Claude uses every photo: Front and side views for proportions, Detail shots for small parts. Add the Real size for an exact result.</p>}
+              {unusedSides && !claude && <p>{preset?.label} uses the Front image only. Choose Hunyuan3D-2mv to use side views too.</p>}
             </>
           )}
         </div>
