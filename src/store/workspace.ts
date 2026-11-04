@@ -218,6 +218,10 @@ export interface Settings {
   grid: number
   /** Thickness of new walls, m. */
   wallThickness: number
+  /** Snap to the grid: plan drawing and dragging, and the 3D gizmo (move by the grid, rotate by 15°). */
+  snap: boolean
+  /** The right-hand sidebar (catalog, scene, inspector) is open. */
+  sidebar: boolean
 }
 
 /** Undo entry: the active project's object list before a change. */
@@ -430,6 +434,8 @@ export const useWorkspace = create<WorkspaceState>()(
         showUpperLevels: false,
         grid: 0.05,
         wallThickness: 0.15,
+        snap: true,
+        sidebar: true,
       },
 
       addProject: () =>

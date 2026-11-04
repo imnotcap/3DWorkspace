@@ -104,6 +104,11 @@ export function drawPlan(i: DrawInput): SvgNode[] {
 
   // Rooms: floor tint, name and area.
   const labels: SvgNode[] = []
+  // Text boxes already placed (room names first): a furniture label that would overlap one is left out.
+  const taken: [number, number, number, number][] = []
+  const box = (x: number, y: number, w: number, h: number): [number, number, number, number] => [x - w / 2, y - h / 2, x + w / 2, y + h / 2]
+  const free = (b: [number, number, number, number]) => taken.every((t) => b[2] < t[0] || b[0] > t[2] || b[3] < t[1] || b[1] > t[3])
+  const furnitureLabels: { o: SceneObject; area: number }[] = []
   geom.faces.forEach((f) => {
     const info = roomFor(f, i.rooms, i.levelId)
     const floor = info?.floor ?? DEFAULT_FLOOR_FINISH
@@ -115,6 +120,8 @@ export function drawPlan(i: DrawInput): SvgNode[] {
     const fs = Math.max(px(12), 0.12)
     labels.push({ tag: 'text', attrs: { x: f.center[0], y: f.center[1] - fs * 0.15, 'font-size': fs, 'font-family': T.font, 'font-weight': 'bold', fill: T.text, 'text-anchor': 'middle', 'pointer-events': 'none' }, text: info?.name ?? 'Room' })
     labels.push({ tag: 'text', attrs: { x: f.center[0], y: f.center[1] + fs * 1.05, 'font-size': fs * 0.82, 'font-family': T.font, fill: T.subtext, 'text-anchor': 'middle', 'pointer-events': 'none' }, text: `${f.area.toFixed(1)} m²` })
+    const name = info?.name ?? 'Room'
+    taken.push(box(f.center[0], f.center[1] + fs * 0.35, Math.max(name.length * 0.6, 7 * 0.55) * fs, fs * 2.5))
   })
 
   // Furniture (drawn under walls, so pieces against a wall read cleanly).
@@ -138,10 +145,25 @@ export function drawPlan(i: DrawInput): SvgNode[] {
     const f0 = fp.at(-fp.w * 0.3, fp.d / 2 - Math.min(0.06, fp.d * 0.2))
     const f1 = fp.at(fp.w * 0.3, fp.d / 2 - Math.min(0.06, fp.d * 0.2))
     if (!isRug) out.push({ tag: 'line', attrs: { x1: f0[0], y1: f0[1], x2: f1[0], y2: f1[1], stroke: T.furnitureStroke, 'stroke-width': px(1), 'pointer-events': 'none' } })
-    if (Math.min(fp.w, fp.d) * scale > 34) {
-      const fs = Math.min(px(10), fp.d * 0.25, 0.1)
-      labels.push({ tag: 'text', attrs: { x: fp.c[0], y: fp.c[1] + fs * 0.35, 'font-size': fs, 'font-family': T.font, fill: T.subtext, 'text-anchor': 'middle', 'pointer-events': 'none' }, text: o.name.replace(/\.\d{3}$/, '') || item?.name || '' })
-    }
+    // Rugs and ceiling lights sit under / over other pieces: their outline is enough.
+    if (!isRug && item?.mount !== 'ceiling' && Math.min(fp.w, fp.d) * scale > 30) furnitureLabels.push({ o, area: fp.w * fp.d })
+  }
+
+  // Furniture labels, biggest pieces first; each fits inside its piece and never overlaps another label.
+  furnitureLabels.sort((a, b) => b.area - a.area)
+  for (const { o } of furnitureLabels) {
+    const fp = footprint(o)
+    const text = o.name.replace(/\.\d{3}$/, '') || itemById(o.furniture?.item)?.name || ''
+    if (!text) continue
+    // Horizontal text: the space it has across is the footprint's extent along x.
+    const across = Math.abs(fp.w * Math.cos(fp.yaw)) + Math.abs(fp.d * Math.sin(fp.yaw))
+    const tall = Math.abs(fp.w * Math.sin(fp.yaw)) + Math.abs(fp.d * Math.cos(fp.yaw))
+    const fs = Math.min(px(10), tall * 0.3, (across * 0.9) / (text.length * 0.55), 0.1)
+    if (fs * scale < 6.5) continue
+    const b = box(fp.c[0], fp.c[1], text.length * 0.55 * fs, fs * 1.3)
+    if (!free(b)) continue
+    taken.push(b)
+    labels.push({ tag: 'text', attrs: { x: fp.c[0], y: fp.c[1] + fs * 0.35, 'font-size': fs, 'font-family': T.font, fill: T.subtext, 'text-anchor': 'middle', 'pointer-events': 'none' }, text })
   }
 
   // Walls: solid footprints; openings punched through and drawn as symbols.

@@ -362,6 +362,8 @@ function SceneContent() {
   const shading = useWorkspace((s) => s.shading)
   const tool = useWorkspace((s) => s.tool)
   const showGrid = useWorkspace((s) => s.settings.showGrid)
+  const snap = useWorkspace((s) => s.settings.snap)
+  const gridStep = useWorkspace((s) => s.settings.grid)
   const invalidate = useThree((s) => s.invalidate)
   const [target, setTarget] = useState<Object3D | null>(null)
   const cameraView = useWorkspace((s) => s.cameraView)
@@ -448,7 +450,7 @@ function SceneContent() {
           </>
         )}
         {target && tool !== 'select' && (
-          <TransformControls object={target} mode={tool} size={0.8} onChange={() => invalidate()} onObjectChange={() => keepOutOfWalls(target)} onMouseUp={() => commitTransform(target, tool)} />
+          <TransformControls object={target} mode={tool} size={0.8} translationSnap={snap ? gridStep : null} rotationSnap={snap ? Math.PI / 12 : null} scaleSnap={snap ? 0.05 : null} onChange={() => invalidate()} onObjectChange={() => keepOutOfWalls(target)} onMouseUp={() => commitTransform(target, tool)} />
         )}
       </group>
     </>

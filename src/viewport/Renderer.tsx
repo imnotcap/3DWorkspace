@@ -112,7 +112,17 @@ class Engine {
   private syncSize() {
     this.gl.getDrawingBufferSize(this.size)
     const { x, y } = this.size
-    if (this.composer.renderTarget1.width !== x || this.composer.renderTarget1.height !== y) this.composer.setSize(x, y)
+    // MSAA only for the viewport: at 4K two multisampled HDR buffers alone take ~0.5 GB of GPU
+    // memory, and a frame that size is already fine-grained enough (path tracing antialiases itself).
+    const samples = x * y > 2.5e6 ? 0 : 4
+    const a = this.composer.renderTarget1
+    const b = this.composer.renderTarget2
+    if (a.samples !== samples) {
+      a.samples = b.samples = samples
+      a.dispose()
+      b.dispose()
+    }
+    if (a.width !== x || a.height !== y) this.composer.setSize(x, y)
   }
 
   /** Real-time frame through the HDR pipeline (bloom, tone mapping) to the canvas. */
@@ -331,6 +341,18 @@ class Engine {
       this.raster(scene, camera)
       return
     }
+    try {
+      await this.trace(scene, camera, opts, s.denoise)
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') throw e
+      // Path tracing failed (GPU out of memory, lost context…): this frame still gets a picture.
+      console.warn('[pathtracer] final frame failed, using the real-time render', e)
+      if (this.gl.getContext().isContextLost()) throw new Error('The graphics card stopped responding (WebGL context lost). Try a smaller resolution or fewer samples.')
+      this.raster(scene, camera)
+    }
+  }
+
+  private async trace(scene: Scene, camera: Camera, opts: { samples: number; rebuild: boolean; onSample?: (done: number) => void; signal?: AbortSignal }, denoise: boolean) {
     const pt = this.tracer()
     this.configure(false)
     if (opts.rebuild || !this.built) {
@@ -359,7 +381,7 @@ class Engine {
         last = performance.now()
       }
     }
-    this.presentTrace(s.denoise)
+    this.presentTrace(denoise)
     this.sig.camera = 0
   }
 

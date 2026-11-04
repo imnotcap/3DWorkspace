@@ -1,4 +1,4 @@
-import { Box, BrickWall, DoorOpen, Footprints, FileDown, LayoutTemplate, Maximize2, MousePointer2, PanelsTopLeft, Plus, Square, SquareDashed, AppWindow, Trash2 } from 'lucide-react'
+import { Magnet, Box, BrickWall, DoorOpen, Footprints, FileDown, LayoutTemplate, Maximize2, MousePointer2, PanelsTopLeft, Plus, Square, SquareDashed, AppWindow, Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { lazy, Suspense, useState } from 'react'
 import { cn } from '@/lib/cn'
@@ -48,6 +48,8 @@ export function PlanToolbar() {
   const tool = useWorkspace((s) => s.planTool)
   const kind = useWorkspace((s) => s.openingKind)
   const thickness = useWorkspace((s) => s.settings.wallThickness)
+  const snap = useWorkspace((s) => s.settings.snap)
+  const grid = useWorkspace((s) => s.settings.grid)
   const project = useActiveProject()
   const { setView, setPlanTool, setOpeningKind, updateSettings, setActiveLevel, editPlan } = useWorkspace.getState()
   const [templates, setTemplates] = useState(false)
@@ -116,6 +118,24 @@ export function PlanToolbar() {
         </div>
       )}
       <div className="flex-1" />
+      <div className="flex items-center gap-0.5 rounded-lg bg-app/70 p-0.5">
+        <Tooltip label={snap ? 'Snap to grid: on (plan and 3D)' : 'Snap to grid: off'} side="bottom">
+          <Seg active={snap} onClick={() => updateSettings({ snap: !snap })} label="Snap to grid">
+            <Magnet className="size-3.5" />
+            <span className="hidden xl:inline">Snap</span>
+          </Seg>
+        </Tooltip>
+        {snap && (
+          <select aria-label="Grid size" value={grid} onChange={(e) => updateSettings({ grid: Number(e.target.value) })} className="h-6 rounded-md bg-raised px-1 text-2xs text-fg outline-none">
+            {[0.01, 0.05, 0.1, 0.25, 0.5].map((g) => (
+              <option key={g} value={g}>
+                {Math.round(g * 100)} cm
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+      <Divider />
       <div className="flex items-center gap-0.5 rounded-lg bg-app/70 p-0.5">
         {[...project.levels].reverse().map((l) => (
           <Seg key={l.id} active={l.id === project.activeLevelId} onClick={() => setActiveLevel(l.id)}>

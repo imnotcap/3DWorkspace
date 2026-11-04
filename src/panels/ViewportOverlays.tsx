@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { Aperture, Grid3x3, Layers, SlidersHorizontal, X } from 'lucide-react'
+import { Aperture, Grid3x3, Layers, SlidersHorizontal, Video, X } from 'lucide-react'
 import { PRIMITIVES } from '@/lib/primitives'
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { actions } from '@/lib/actions'
@@ -30,6 +30,15 @@ export function ViewportHeader() {
         <Layers className="size-3 text-dim" /> Object Mode
       </span>
       <div className="mx-0.5 h-3.5 w-px bg-line-strong" />
+      <Tooltip label={cameraView ? 'Leave camera view' : 'Look through the camera'} shortcut="0" side="bottom">
+        <button
+          type="button"
+          onClick={() => (cameraView && useWorkspace.getState().setPlaying(false), actions.toggleCameraView())}
+          className={`flex h-6 items-center gap-1 rounded px-2 text-xs transition-colors ${cameraView ? 'bg-accent text-white' : 'text-dim hover:bg-hover hover:text-fg'}`}
+        >
+          <Video className="size-3" /> Camera
+        </button>
+      </Tooltip>
       <Menu
         trigger="View"
         items={[
@@ -346,6 +355,13 @@ export function CameraFrame() {
             className="absolute outline outline-1 outline-white/25"
             style={{ left: r.x, top: r.y, width: r.w, height: r.h, boxShadow: '0 0 0 9999px rgba(0,0,0,0.55)' }}
           >
+            <button
+              type="button"
+              onClick={() => (useWorkspace.getState().setPlaying(false), useWorkspace.getState().setCameraView(false))}
+              className="pointer-events-auto absolute -top-6 right-0 flex h-5 items-center gap-1 rounded bg-panel-2/90 px-1.5 text-2xs text-fg hover:bg-raised"
+            >
+              <X className="size-3" /> Leave camera view · 0
+            </button>
             <span className="absolute -top-5 left-0 font-mono text-2xs text-dim">
               Camera · {w}×{h} · {Math.round(focal)}mm{keyed ? ' · keyed' : ' · drag to frame'}
             </span>
