@@ -1,6 +1,5 @@
-import { Magnet, Box, BrickWall, DoorOpen, Footprints, FileDown, LayoutTemplate, Maximize2, MousePointer2, PanelsTopLeft, Plus, Square, SquareDashed, AppWindow, Trash2 } from 'lucide-react'
+import { Magnet, Box, BrickWall, DoorOpen, Footprints, Maximize2, MousePointer2, PanelsTopLeft, Plus, Square, SquareDashed, AppWindow, Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { lazy, Suspense, useState } from 'react'
 import { cn } from '@/lib/cn'
 import { actions } from '@/lib/actions'
 import { OPENING_DEFAULTS, type OpeningKind } from '@/plan/types'
@@ -8,7 +7,6 @@ import { newLevel, useActiveProject, useWorkspace, type PlanTool, type View } fr
 import { viewport } from '@/viewport/bridge'
 import { Tooltip } from '@/ui/primitives'
 
-const TemplatesDialog = lazy(() => import('./TemplatesDialog').then((m) => ({ default: m.TemplatesDialog })))
 
 const VIEWS: { id: View; label: string; icon: ReactNode }[] = [
   { id: 'plan', label: 'Plan', icon: <SquareDashed className="size-3.5" /> },
@@ -52,7 +50,6 @@ export function PlanToolbar() {
   const grid = useWorkspace((s) => s.settings.grid)
   const project = useActiveProject()
   const { setView, setPlanTool, setOpeningKind, updateSettings, setActiveLevel, editPlan } = useWorkspace.getState()
-  const [templates, setTemplates] = useState(false)
 
   const pickTool = (t: PlanTool) => {
     setPlanTool(t)
@@ -154,21 +151,6 @@ export function PlanToolbar() {
           <Maximize2 className="size-3.5" />
         </Seg>
       </Tooltip>
-      <Seg onClick={() => setTemplates(true)} label="Templates">
-        <LayoutTemplate className="size-3.5" /> Templates
-      </Seg>
-      <button
-        type="button"
-        onClick={actions.exportPdf}
-        className="ml-1 flex h-6.5 shrink-0 items-center gap-1.5 rounded-md bg-fg px-2.5 text-xs font-medium text-app hover:bg-white"
-      >
-        <FileDown className="size-3.5" /> Export PDF
-      </button>
-      {templates && (
-        <Suspense fallback={null}>
-          <TemplatesDialog onClose={() => setTemplates(false)} />
-        </Suspense>
-      )}
     </div>
   )
 }
