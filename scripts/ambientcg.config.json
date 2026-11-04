@@ -1,0 +1,17 @@
+{
+  "_comment": "Preset id → ambientCG search. Set \"id\" to pin an exact asset (e.g. \"Wood049\"); leave null to use the top search result. tile_m = metres one texture repeat covers.",
+  "oak":           { "query": "oak wood",            "id": null, "tile_m": 1.2 },
+  "walnut":        { "query": "walnut wood",         "id": null, "tile_m": 1.2 },
+  "birch":         { "query": "plywood",             "id": null, "tile_m": 1.2 },
+  "laminate":      { "query": "plastic",             "id": null, "tile_m": 1.0 },
+  "marble":        { "query": "marble",              "id": null, "tile_m": 1.5 },
+  "concrete":      { "query": "concrete",            "id": null, "tile_m": 2.0 },
+  "brushed-alu":   { "query": "brushed metal",       "id": null, "tile_m": 0.6 },
+  "brushed-steel": { "query": "brushed metal",       "id": null, "tile_m": 0.6 },
+  "powder-black":  { "query": "painted metal",       "id": null, "tile_m": 0.8 },
+  "powder-anthracite": { "query": "painted metal",   "id": null, "tile_m": 0.8 },
+  "powder-white":  { "query": "painted metal",       "id": null, "tile_m": 0.8 },
+  "leather":       { "query": "leather",             "id": null, "tile_m": 0.5 },
+  "felt":          { "query": "fabric",              "id": null, "tile_m": 0.5 },
+  "rubber":        { "query": "rubber",              "id": null, "tile_m": 0.4 }
+}

@@ -22,6 +22,9 @@ interface StoredObject {
   fitSize?: RealSize | null
   keys?: ObjectKey[]
   interpolation?: Interpolation
+  surfaces?: Record<string, MaterialOverride>
+  exact?: boolean
+  spec?: unknown
 }
 interface StoredImage {
   id: string
@@ -31,7 +34,7 @@ interface StoredImage {
 }
 interface StoredState {
   activeProjectId: string
-  projects: { id: string; name: string; objects: StoredObject[]; images: StoredImage[]; camera?: CameraPose | null; realSize?: RealSize | null; animation?: Animation }[]
+  projects: { id: string; name: string; objects: StoredObject[]; images: StoredImage[]; camera?: CameraPose | null; realSize?: RealSize | null; autoAngles?: { azimuth: number; polar: number } | null; animation?: Animation }[]
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null
@@ -72,10 +75,11 @@ async function save() {
       name: p.name,
       camera: p.camera,
       realSize: p.realSize,
+      autoAngles: p.autoAngles,
       animation: p.animation,
       objects: p.objects.map((o) => {
         blobs.push([o.id, o.blob])
-        return { id: o.id, name: o.name, source: o.source, visible: o.visible, renderable: o.renderable, transform: o.transform, shade: o.shade, material: o.material, fitSize: o.fitSize ?? null, keys: o.keys, interpolation: o.interpolation }
+        return { id: o.id, name: o.name, source: o.source, visible: o.visible, renderable: o.renderable, transform: o.transform, shade: o.shade, material: o.material, fitSize: o.fitSize ?? null, keys: o.keys, interpolation: o.interpolation, surfaces: o.surfaces, exact: o.exact, spec: o.spec }
       }),
       images: p.images.map((i) => {
         blobs.push([i.id, i.file])
@@ -135,7 +139,7 @@ async function load(): Promise<boolean> {
           hasFront = true
           return { ...i, view }
         })
-      return { id: p.id, name: p.name, objects, images, camera: p.camera ?? null, realSize: p.realSize ?? null, animation: { ...DEFAULT_ANIMATION, ...p.animation } }
+      return { id: p.id, name: p.name, objects, images, camera: p.camera ?? null, realSize: p.realSize ?? null, autoAngles: p.autoAngles ?? null, animation: { ...DEFAULT_ANIMATION, ...p.animation } }
     }),
   )
 

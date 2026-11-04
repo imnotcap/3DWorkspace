@@ -11,6 +11,7 @@ Vite · React 19 · TypeScript · Tailwind v4 · Motion · React Three Fiber + d
 | Backend | Where it runs | Notes |
 | --- | --- | --- |
 | **Hugging Face Space** (default) | Public Gradio Spaces on HF GPUs | No key needed. An optional HF token raises your quota. Presets: **TRELLIS.2 (default, MIT, PBR, up to 1536³ / 4K textures)**, Hunyuan3D-2.1, Hunyuan3D-2mv (multi-view, shape only), Hunyuan3D-2, TripoSR. Any Space id works. |
+| **Parts · Claude** (exact) | Anthropic API, your own key | Claude reads every photo (detail shots too) and writes the product as exact primitive parts at real size with materials. A self-check renders the result from the photo's angle and has Claude correct it. Refine later in plain words ("legs are square 6 × 6 cm"). Best for hard-surface products. Roughly $0.20–0.80 per model on Opus 5.5. |
 | **Photogrammetry** (exact) | `worker/photogrammetry/` on any computer (CPU) | Measures a real object from 30–80 photos with COLMAP + OpenMVS, then stands it upright and removes the floor. See [its README](worker/photogrammetry/README.md). |
 | **Local GPU worker** | `worker/` on your own NVIDIA GPU | Best quality: multi-view geometry, then a texture painted from the Front photo. No queue. See [worker/README.md](worker/README.md). |
 
@@ -75,6 +76,22 @@ Transform fields in the Object panel (N) are drag-to-scrub: drag to change, Shif
 - The gizmo moves the three.js object directly. The store is only updated on release (one undo step).
 - Raycasting uses `three-mesh-bvh`, built in idle time: picking a 1M-triangle mesh takes about 0.1 ms.
 - Each model suspends and fails on its own. A broken file is flagged in the outliner without affecting the viewport.
+
+## Materials
+
+The Object panel lists every surface of an object (for example the desk's laminate top, steel frame, plastic controller and keys). Each surface gets a material from the library and a colour:
+
+- **Library:** 26 presets in 7 categories (metals, powder coats and paints, plastics, wood, stone, glass, fabric), using physical properties: clearcoat, glass transmission, fabric sheen.
+- **Textures:** CC0 PBR maps (colour, normal, roughness, metalness, AO) from [ambientCG](https://ambientcg.com), downloaded at build time by `npm run textures` (see `scripts/ambientcg.config.json`; pin an asset with `"id"`). Without them, each preset falls back to a procedural texture. Claude-parts models get metric UVs, so a texture has the same real-world scale on every part.
+- **Colour:** a palette of 16 standard colours (RAL-style) plus a custom picker. On textured materials, a colour you pick tints the texture.
+
+## API keys
+
+This site has **no API keys of its own**. Every visitor enters their own Hugging Face token or Anthropic key in Generate settings:
+
+- Keys are kept **in memory only** by default and are gone when you close the tab. *Remember on this device* stores them in the browser's localStorage. *Forget my keys* removes them.
+- Keys are sent only to the service they belong to (huggingface.co or api.anthropic.com). They are never saved with projects or included in exports.
+- The deploy workflow runs `npm run check:secrets`, which fails the build if anything resembling a key ends up in the published site.
 
 ## Rendering & animation
 

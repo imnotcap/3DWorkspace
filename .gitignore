@@ -5,3 +5,6 @@ dist
 worker/.venv
 worker/__pycache__
 worker/weights
+
+# Downloaded at build time by scripts/fetch-textures.mjs
+public/textures/

@@ -13,6 +13,8 @@ export interface MeshStats {
   meshes: number
   /** Bounding-box size at scale 1, in metres (1 unit = 1 m). */
   size: Vec3
+  /** Material slots found in the mesh, with their generated colour. */
+  surfaces?: { key: string; color: string }[]
 }
 
 /** Real-world size in metres; any axis may be left out. */
@@ -34,6 +36,8 @@ export interface MaterialOverride {
   metalness: number
   /** Keep the generated texture and tint it, instead of a flat colour. */
   keepTexture: boolean
+  /** Material library preset (adds its textures and physical properties). */
+  preset?: string
 }
 
 /** Orbit-style camera: spherical around a target (azimuth unwrapped, so turntables can spin 360°). */
@@ -80,8 +84,15 @@ export interface SceneObject {
   source: string
   transform: Transform
   shade: ShadeMode
+  /** Override for every surface (older objects; the UI now edits `surfaces`). */
   material: MaterialOverride | null
+  /** Per-surface overrides, keyed by material slot name. */
+  surfaces?: Record<string, MaterialOverride>
   stats?: MeshStats
+  /** Built at real size (metres); the viewport doesn't rescale it. */
+  exact?: boolean
+  /** Claude parts description, for refining. */
+  spec?: unknown
   /** Transform keyframes; when present they drive the object instead of `transform`. */
   keys?: ObjectKey[]
   /** How this object's keys blend (default: smooth). */
@@ -107,6 +118,8 @@ export interface Project {
   camera: CameraPose | null
   /** Spec-sheet dimensions applied to every mesh generated in this project. */
   realSize: RealSize | null
+  /** Default render angle (radians), e.g. estimated from the Front photo. */
+  autoAngles?: { azimuth: number; polar: number } | null
   animation: Animation
 }
 
@@ -124,6 +137,9 @@ export interface Settings {
   hfToken: string
   workerUrl: string
   photogrammetryUrl: string
+  anthropicKey: string
+  claudeModel: 'claude-opus-5-5' | 'claude-sonnet-5-5'
+  claudeSelfCheck: boolean
   quality: Quality
   removeBackground: boolean
   seed: number | null
@@ -136,6 +152,8 @@ export interface Settings {
   transparent: boolean
   refOpacity: number
   showTimeline: boolean
+  /** Keep API keys in this browser's storage. Off = keys live in memory until the tab closes. */
+  rememberKeys: boolean
 }
 
 /** Undo entry: the active project's object list before a change. */
@@ -168,7 +186,8 @@ interface WorkspaceState {
   renameProject: (id: string, name: string) => void
   replaceProjects: (projects: Project[], activeId: string) => void
   // objects
-  addObject: (obj: { name: string; blob: Blob; source: string; fitSize?: RealSize | null }, projectId?: string) => string
+  addObject: (obj: { name: string; blob: Blob; source: string; fitSize?: RealSize | null; exact?: boolean; spec?: unknown }, projectId?: string) => string
+  setAutoAngles: (angles: { azimuth: number; polar: number } | null, projectId?: string) => void
   /** Silent update (stats, live scrubbing). Use `commit` for undoable edits. */
   updateObject: (id: string, patch: Partial<SceneObject>) => void
   /** Undoable update. */
@@ -189,6 +208,7 @@ interface WorkspaceState {
   setPropertyTab: (t: PropertyTab) => void
   setJob: (j: JobState) => void
   updateSettings: (patch: Partial<Settings>) => void
+  forgetKeys: () => void
   // camera + animation (active project)
   setCamera: (pose: CameraPose | null) => void
   setRealSize: (size: RealSize | null) => void
@@ -249,6 +269,9 @@ export const useWorkspace = create<WorkspaceState>()(
         hfToken: '',
         workerUrl: 'http://localhost:8000',
         photogrammetryUrl: 'http://localhost:8001',
+        anthropicKey: '',
+        claudeModel: 'claude-opus-5-5',
+        claudeSelfCheck: true,
         quality: 'high',
         removeBackground: true,
         seed: null,
@@ -261,6 +284,7 @@ export const useWorkspace = create<WorkspaceState>()(
         transparent: false,
         refOpacity: 0,
         showTimeline: true,
+        rememberKeys: false,
       },
 
       addProject: () =>
@@ -295,7 +319,8 @@ export const useWorkspace = create<WorkspaceState>()(
           return { past: [...s.past, { projectId: p.id, label, objects: p.objects }].slice(-HISTORY_LIMIT), future: [] }
         }),
 
-      addObject: ({ name, blob, source, fitSize }, projectId) => {
+      setAutoAngles: (autoAngles, projectId) => set((s) => patchProject(s, projectId ?? s.activeProjectId, (p) => ({ ...p, autoAngles }))),
+      addObject: ({ name, blob, source, fitSize, exact, spec }, projectId) => {
         const id = uid()
         const target = projectId ?? get().activeProjectId
         if (target === get().activeProjectId) get().checkpoint('Add')
@@ -316,6 +341,8 @@ export const useWorkspace = create<WorkspaceState>()(
                 shade: 'auto',
                 material: null,
                 fitSize: fitSize ?? null,
+                exact,
+                spec,
               },
             ],
           })),
@@ -414,6 +441,7 @@ export const useWorkspace = create<WorkspaceState>()(
       setPropertyTab: (propertyTab) => set({ propertyTab }),
       setJob: (job) => set({ job }),
       updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
+      forgetKeys: () => set((s) => ({ settings: { ...s.settings, hfToken: '', anthropicKey: '', rememberKeys: false } })),
 
       setCamera: (camera) => set((s) => patchActive(s, (p) => ({ ...p, camera }))),
       setRealSize: (realSize) => set((s) => patchActive(s, (p) => ({ ...p, realSize }))),
@@ -453,7 +481,7 @@ export const useWorkspace = create<WorkspaceState>()(
     }),
     {
       name: 'workspace',
-      version: 3,
+      version: 4,
       // v2: textured model replaces shape-only 2mv as default. v3: TRELLIS.2 replaces Hunyuan3D-2.1 as default.
       migrate: (persisted, version) => {
         const p = persisted as { settings?: Partial<Settings>; shading?: ShadingMode }
@@ -462,6 +490,8 @@ export const useWorkspace = create<WorkspaceState>()(
           if (p.settings.quality === 'standard') p.settings.quality = 'high'
         }
         if (version < 3 && p.settings?.spaceId === 'tencent/Hunyuan3D-2.1') p.settings.spaceId = 'microsoft/TRELLIS.2'
+        // v4: keys are memory-only by default. Anyone who already had a saved key keeps it saved.
+        if (version < 4 && p.settings) p.settings.rememberKeys = !!(p.settings.hfToken || p.settings.anthropicKey)
         return p as never
       },
       merge: (persisted, current) => {
@@ -469,7 +499,11 @@ export const useWorkspace = create<WorkspaceState>()(
         return { ...current, ...p, settings: { ...current.settings, ...p?.settings } }
       },
       // Preferences only; projects and meshes persist to IndexedDB (lib/persistence.ts).
-      partialize: (s) => ({ settings: s.settings, shading: s.shading }),
+      // API keys are written only if the user chose "Remember on this device".
+      partialize: (s) => ({
+        settings: s.settings.rememberKeys ? s.settings : { ...s.settings, hfToken: '', anthropicKey: '' },
+        shading: s.shading,
+      }),
     },
   ),
 )

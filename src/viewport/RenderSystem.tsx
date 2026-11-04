@@ -50,7 +50,8 @@ function autoPose(): CameraPose {
     }
     applyObjectsAt(s.frame)
   }
-  const pose = framePose(box, { azimuth: MathUtils.degToRad(18), polar: MathUtils.degToRad(76), focal: 50 }, aspect)
+  const angles = p.autoAngles ?? { azimuth: MathUtils.degToRad(18), polar: MathUtils.degToRad(76) }
+  const pose = framePose(box, { ...angles, focal: 50 }, aspect)
   autoCache = { project: p, aspect, pose }
   return pose
 }
