@@ -21,6 +21,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { useActiveProject, useWorkspace, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
 import { Model, withOriginalMaterials } from './Model'
+import { CameraView, RenderBridge } from './RenderSystem'
 
 const AXIS_X = '#e5484d'
 const AXIS_Z = '#3e63dd'
@@ -116,11 +117,15 @@ function CameraRig() {
       invalidate()
     }
     viewport.frameSelected = () => {
+      useWorkspace.getState().setCameraView(false)
       const id = useWorkspace.getState().selectedId
       const o = id ? viewport.objects.get(id) : undefined
       fit(o ? [o] : [...viewport.objects.values()])
     }
-    viewport.frameAll = () => fit([...viewport.objects.values()])
+    viewport.frameAll = () => {
+      useWorkspace.getState().setCameraView(false)
+      fit([...viewport.objects.values()])
+    }
   }, [camera, controls, invalidate])
 
   useFrame((_, dt) => {
@@ -137,30 +142,11 @@ function CameraRig() {
   return null
 }
 
-/** Registers capture/export so menus and hotkeys can call them. */
+/** Registers export so menus and hotkeys can call it. */
 function Bridge() {
   const { gl, scene, camera, invalidate } = useThree()
   useEffect(() => {
     viewport.invalidate = invalidate
-    viewport.capture = async (scale = 2) => {
-      const hidden: Object3D[] = []
-      scene.traverse((o) => {
-        const hide = o.visible && (o.name.startsWith('__') || o.userData.renderable === false)
-        if (hide) {
-          o.visible = false
-          hidden.push(o)
-        }
-      })
-      const prev = gl.getPixelRatio()
-      gl.setPixelRatio(Math.min(prev * scale, 4))
-      gl.render(scene, camera)
-      // toBlob snapshots the bitmap synchronously, before the buffer is cleared.
-      const blob = await new Promise<Blob | null>((res) => gl.domElement.toBlob(res, 'image/png'))
-      gl.setPixelRatio(prev)
-      hidden.forEach((o) => (o.visible = true))
-      invalidate()
-      return blob
-    }
     viewport.exportGlb = async (id) => {
       const target = viewport.objects.get(id)
       if (!target) return null
@@ -279,6 +265,8 @@ export function Viewport() {
       <SceneContent />
       <CameraRig />
       <Bridge />
+      <RenderBridge />
+      <CameraView />
       <OrbitControls
         makeDefault
         enableDamping

@@ -23,17 +23,25 @@ export interface SpacePreset {
 
 export const SPACE_PRESETS: SpacePreset[] = [
   {
+    id: 'tencent/Hunyuan3D-2.1',
+    label: 'Hunyuan3D-2.1 · PBR',
+    note: 'Front image → geometry + PBR textures (color, roughness, metal). Best for materials.',
+    multiView: false,
+    textured: true,
+    endpoint: '/generation_all',
+  },
+  {
     id: 'tencent/Hunyuan3D-2mv',
-    label: 'Hunyuan3D-2mv',
-    note: 'Multi-view (front / back / left / right). Best geometry from several photos.',
+    label: 'Hunyuan3D-2mv · shape',
+    note: 'Front/back/left/right → untextured geometry. Use when you have full side views.',
     multiView: true,
     textured: false,
     endpoint: '/shape_generation',
   },
   {
     id: 'tencent/Hunyuan3D-2',
-    label: 'Hunyuan3D-2',
-    note: 'Single image, textured mesh. Slower.',
+    label: 'Hunyuan3D-2 · textured',
+    note: 'Front image → geometry + color texture.',
     multiView: false,
     textured: true,
     endpoint: '/generation_all',
@@ -53,6 +61,7 @@ export const QUALITY_PARAMS: Record<Quality, { steps: number; octree: number; mc
   draft: { steps: 20, octree: 192, mc: 192 },
   standard: { steps: 30, octree: 256, mc: 256 },
   high: { steps: 50, octree: 384, mc: 320 },
+  ultra: { steps: 50, octree: 512, mc: 512 },
 }
 
 export function findPreset(id: string): SpacePreset | undefined {

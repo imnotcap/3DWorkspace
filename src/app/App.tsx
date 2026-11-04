@@ -6,7 +6,9 @@ import { Outliner } from '@/panels/Outliner'
 import { StatusBar } from '@/panels/StatusBar'
 import { TabBar } from '@/panels/TabBar'
 import { ToolStrip } from '@/panels/ToolStrip'
-import { EmptyState, JobCard, StatsOverlay, ViewportHeader, ViewportSideStrip } from '@/panels/ViewportOverlays'
+import { Timeline } from '@/panels/Timeline'
+import { CameraFrame, EmptyState, JobCard, RenderProgress, StatsOverlay, ViewportHeader, ViewportSideStrip } from '@/panels/ViewportOverlays'
+import { useWorkspace } from '@/store/workspace'
 import { useHotkeys } from './useHotkeys'
 
 // three.js is the heaviest chunk; split it so the shell paints first.
@@ -21,6 +23,7 @@ const Handle = ({ vertical }: { vertical?: boolean }) => (
 export function App() {
   useHotkeys()
   const [dragging, setDragging] = useState(false)
+  const showTimeline = useWorkspace((s) => s.settings.showTimeline)
 
   return (
     <div className="flex h-full flex-col bg-app">
@@ -29,26 +32,40 @@ export function App() {
         <ToolStrip />
         <Group orientation="horizontal" className="min-w-0 flex-1">
           <Panel minSize="40" defaultSize="78">
-            <div
-              className="relative size-full overflow-hidden rounded-lg bg-viewport"
-              onDragEnter={(e) => (e.preventDefault(), setDragging(true))}
-              onDragOver={(e) => e.preventDefault()}
-              onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)}
-              onDrop={(e) => {
-                e.preventDefault()
-                setDragging(false)
-                actions.handleDrop([...e.dataTransfer.files])
-              }}
-            >
-              <Suspense fallback={null}>
-                <Viewport />
-              </Suspense>
-              <ViewportHeader />
-              <ViewportSideStrip />
-              <StatsOverlay />
-              <EmptyState dragging={dragging} />
-              <JobCard />
-            </div>
+            <Group orientation="vertical">
+              <Panel minSize="30">
+                <div
+                  className="relative size-full overflow-hidden rounded-lg bg-viewport"
+                  onDragEnter={(e) => (e.preventDefault(), setDragging(true))}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    setDragging(false)
+                    actions.handleDrop([...e.dataTransfer.files])
+                  }}
+                >
+                  <Suspense fallback={null}>
+                    <Viewport />
+                  </Suspense>
+                  <ViewportHeader />
+                  <ViewportSideStrip />
+                  <StatsOverlay />
+                  <CameraFrame />
+                  <EmptyState dragging={dragging} />
+                  <JobCard />
+                  <RenderProgress />
+                </div>
+              </Panel>
+              {showTimeline && (
+                <>
+                  <Handle vertical />
+                  <Panel defaultSize="150px" minSize="96px" maxSize="45" className="rounded-lg bg-panel">
+                    <Timeline />
+                  </Panel>
+                </>
+              )}
+            </Group>
           </Panel>
           <Handle />
           <Panel minSize="240px" defaultSize="22" maxSize="40">

@@ -1,5 +1,11 @@
-export type ViewTag = 'auto' | 'front' | 'back' | 'left' | 'right'
-export type Quality = 'draft' | 'standard' | 'high'
+/**
+ * front/back/left/right: full views of the object, used for geometry.
+ * detail: close-ups kept for reference only. Never sent as a view, because a
+ * multi-view model would treat a close-up as a whole side of the object.
+ */
+export type ViewTag = 'front' | 'back' | 'left' | 'right' | 'detail'
+export const GEOMETRY_VIEWS = ['front', 'back', 'left', 'right'] as const
+export type Quality = 'draft' | 'standard' | 'high' | 'ultra'
 
 export interface GenerateInput {
   images: { blob: Blob; view: ViewTag }[]

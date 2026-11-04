@@ -5,6 +5,7 @@ services:
       - "8000:8000"
     environment:
       MODEL: ${MODEL:-mv}          # mv | mini
+      TEXTURE: ${TEXTURE:-1}       # 1 = paint color texture from the Front image
       ALLOW_ORIGINS: ${ALLOW_ORIGINS:-*}
     volumes:
       - models:/models             # weights download once, then cached

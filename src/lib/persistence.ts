@@ -1,5 +1,5 @@
 import type { ViewTag } from '@/generation/types'
-import { useWorkspace, type Project, type SceneObject, type Transform } from '@/store/workspace'
+import { DEFAULT_ANIMATION, useWorkspace, type Animation, type CameraPose, type MaterialOverride, type Project, type SceneObject, type ShadeMode, type Transform } from '@/store/workspace'
 
 /**
  * Projects, meshes and input photos survive reloads via IndexedDB.
@@ -17,6 +17,8 @@ interface StoredObject {
   visible: boolean
   renderable: boolean
   transform: Transform
+  shade?: ShadeMode
+  material?: MaterialOverride | null
 }
 interface StoredImage {
   id: string
@@ -26,7 +28,7 @@ interface StoredImage {
 }
 interface StoredState {
   activeProjectId: string
-  projects: { id: string; name: string; objects: StoredObject[]; images: StoredImage[] }[]
+  projects: { id: string; name: string; objects: StoredObject[]; images: StoredImage[]; camera?: CameraPose | null; animation?: Animation }[]
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null
@@ -65,9 +67,11 @@ async function save() {
     projects: projects.map((p) => ({
       id: p.id,
       name: p.name,
+      camera: p.camera,
+      animation: p.animation,
       objects: p.objects.map((o) => {
         blobs.push([o.id, o.blob])
-        return { id: o.id, name: o.name, source: o.source, visible: o.visible, renderable: o.renderable, transform: o.transform }
+        return { id: o.id, name: o.name, source: o.source, visible: o.visible, renderable: o.renderable, transform: o.transform, shade: o.shade, material: o.material }
       }),
       images: p.images.map((i) => {
         blobs.push([i.id, i.file])
@@ -103,10 +107,12 @@ async function load(): Promise<boolean> {
             const blob = await get(o.id)
             if (!blob) return null
             written.add(o.id)
-            return { ...o, blob, url: URL.createObjectURL(blob) }
+            return { ...o, shade: o.shade ?? 'auto', material: o.material ?? null, blob, url: URL.createObjectURL(blob) }
           }),
         )
       ).filter((o): o is SceneObject => !!o)
+      // v1 used an 'auto' tag; it maps to front for the first image, detail for the rest.
+      let hasFront = p.images.some((i) => i.view === 'front')
       const images = (
         await Promise.all(
           p.images.map(async (i) => {
@@ -117,8 +123,15 @@ async function load(): Promise<boolean> {
             return { id: i.id, file, url: URL.createObjectURL(file), view: i.view }
           }),
         )
-      ).filter((i) => !!i)
-      return { id: p.id, name: p.name, objects, images }
+      )
+        .filter((i) => !!i)
+        .map((i) => {
+          if ((i.view as string) !== 'auto') return i
+          const view = hasFront ? ('detail' as const) : ('front' as const)
+          hasFront = true
+          return { ...i, view }
+        })
+      return { id: p.id, name: p.name, objects, images, camera: p.camera ?? null, animation: { ...DEFAULT_ANIMATION, ...p.animation } }
     }),
   )
 

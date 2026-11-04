@@ -9,6 +9,11 @@ RUN git clone --depth 1 https://github.com/Tencent/Hunyuan3D-2 /opt/hy3d \
  && pip install -e /opt/hy3d \
  && pip install fastapi==0.115.6 "uvicorn[standard]==0.34.0" python-multipart==0.0.20
 
+# Texture painter's CUDA extensions (needed when TEXTURE=1).
+ENV TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;8.9;9.0"
+RUN cd /opt/hy3d/hy3dgen/texgen/custom_rasterizer && python setup.py install \
+ && cd /opt/hy3d/hy3dgen/texgen/differentiable_renderer && python setup.py install
+
 WORKDIR /app
 COPY app.py .
 EXPOSE 8000

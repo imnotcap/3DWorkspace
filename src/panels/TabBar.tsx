@@ -30,6 +30,7 @@ export function TabBar() {
           { label: 'Add Images…', onSelect: actions.addImages },
           { separator: true, label: '' },
           { label: 'Render Image', shortcut: 'F12', onSelect: actions.renderImage },
+          { label: 'Render Animation', shortcut: '⌃F12', onSelect: actions.renderAnimation },
           { label: 'Export Selected (.glb)', shortcut: '⌘E', onSelect: actions.exportSelected },
         ]}
       />

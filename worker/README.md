@@ -4,7 +4,7 @@ Runs open-weight [Hunyuan3D-2](https://github.com/Tencent/Hunyuan3D-2) on your o
 
 ## Requirements
 
-- NVIDIA GPU: about 6 GB VRAM for `mini`, 10–12 GB for `mv`
+- NVIDIA GPU: about 16 GB VRAM for `mv` + texture, 10–12 GB for `mv` alone, 6 GB for `mini`
 - Docker with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
 
 ## Run
@@ -21,6 +21,8 @@ Check it's up at http://localhost:8000/health.
 
 ## Notes
 
-- Output is an untextured, cleaned mesh: floaters removed, faces reduced per quality preset.
+- Best-quality path: multi-view geometry (front/back/left/right) from 2mv, then a color texture painted from the Front photo. The free Spaces can't combine those.
+- Set `TEXTURE=0` to skip texturing (saves ~8 GB VRAM and about a minute).
+- Images tagged **Detail** are never used, because a close-up isn't a view of the whole object.
 - To lock CORS to your Pages site, set `ALLOW_ORIGINS=https://<user>.github.io`.
 - `POST /generate` takes multipart `images[]`, `views[]`, `quality`, `remove_background` and `seed`, and returns `model/gltf-binary`.

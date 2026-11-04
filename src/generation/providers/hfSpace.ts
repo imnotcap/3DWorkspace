@@ -6,7 +6,7 @@ import {
   type GenerateOptions,
   type GenerateResult,
   type Provider,
-  type ViewTag,
+  GEOMETRY_VIEWS,
 } from '../types'
 
 export interface HfSpaceSettings {
@@ -20,21 +20,17 @@ type JsApiData = Params[number]
 
 const MODEL_EXT = /\.(glb|gltf)(\?|$)/i
 
-/** Pick the image for each view; untagged images fill free slots in order. */
-function assignViews(images: GenerateInput['images']): Partial<Record<Exclude<ViewTag, 'auto'>, Blob>> {
-  const out: Partial<Record<Exclude<ViewTag, 'auto'>, Blob>> = {}
-  for (const img of images) if (img.view !== 'auto' && !out[img.view]) out[img.view] = img.blob
-  const order = ['front', 'back', 'left', 'right'] as const
-  for (const img of images) {
-    if (img.view !== 'auto') continue
-    const free = order.find((v) => !out[v])
-    if (free) out[free] = img.blob
-  }
+type Views = Partial<Record<(typeof GEOMETRY_VIEWS)[number], Blob>>
+
+/** First image per geometry view. Detail shots are never sent. */
+function assignViews(images: GenerateInput['images']): Views {
+  const out: Views = {}
+  for (const img of images) if (img.view !== 'detail' && !out[img.view]) out[img.view] = img.blob
   return out
 }
 
 /** Map a parameter name to a value from our generic input. `undefined` = keep Space default. */
-function resolveParam(name: string, input: GenerateInput, views: ReturnType<typeof assignViews>, primary: Blob | string): unknown {
+function resolveParam(name: string, input: GenerateInput, views: Views, primary: Blob | string): unknown {
   const n = name.toLowerCase()
   const q = QUALITY_PARAMS[input.quality]
   const file = (b: Blob | undefined) => (b ? handle_file(b) : null)
@@ -68,7 +64,7 @@ function pickEndpoint(api: ApiInfo, hint?: string): string {
   return found[0]
 }
 
-function buildPayload(params: Params, input: GenerateInput, views: ReturnType<typeof assignViews>, primary: Blob | string) {
+function buildPayload(params: Params, input: GenerateInput, views: Views, primary: Blob | string) {
   const payload: Record<string, unknown> = {}
   for (const p of params) {
     const name = p.parameter_name ?? p.label
@@ -132,7 +128,8 @@ export function createHfSpaceProvider(settings: HfSpaceSettings): Provider {
     id: 'hf-space',
     label: 'Hugging Face Space',
     async generate(input, opts): Promise<GenerateResult> {
-      if (!input.images.length) throw new GenerationError('Add at least one image.')
+      if (!input.images.some((i) => i.view === 'front'))
+        throw new GenerationError('Tag one image as Front.', 'Front must show the whole object. Close-ups should be tagged Detail.')
       const preset = findPreset(settings.spaceId)
       const token = settings.token.trim() as `hf_${string}` | ''
 
@@ -147,7 +144,7 @@ export function createHfSpaceProvider(settings: HfSpaceSettings): Provider {
       try {
         const api = await client.view_api()
         const views = assignViews(input.images)
-        let primary: Blob | string = views.front ?? input.images[0].blob
+        let primary: Blob | string = views.front!
 
         if (preset?.preprocess && api.named_endpoints[preset.preprocess]) {
           opts.onProgress({ stage: 'uploading', message: 'Preprocessing image' })

@@ -5,6 +5,7 @@ import { Box3, Box3Helper, BufferGeometry, Color, Group, Mesh, MeshBasicMaterial
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh'
 import { useWorkspace, type SceneObject, type ShadingMode } from '@/store/workspace'
 import { viewport } from './bridge'
+import { disposeSurface, reshade, surfaceFor } from './shading'
 
 // BVH-accelerated raycasting: picking a 1M-triangle mesh stays sub-millisecond.
 BufferGeometry.prototype.computeBoundsTree = computeBoundsTree
@@ -51,6 +52,8 @@ function ModelInner({ obj, selected, shading }: Props) {
       const m = o as Mesh
       if (!m.isMesh) return
       m.userData.original = m.material
+      m.userData.surface = m.material
+      m.userData.geos = { original: m.geometry }
       m.castShadow = m.receiveShadow = true
     })
     return { root, box }
@@ -93,13 +96,48 @@ function ModelInner({ obj, selected, shading }: Props) {
     useWorkspace.getState().updateObject(obj.id, { stats: { vertices, triangles: Math.round(triangles), meshes } })
   }, [root, obj.id])
 
+  // Surface = generated material, or the user's override. Viewport shading picks what's displayed.
+  const override = obj.material
   useLayoutEffect(() => {
     root.traverse((o) => {
       const m = o as Mesh
-      if (m.isMesh) m.material = materialFor(shading, m.userData.original)
+      if (!m.isMesh) return
+      disposeSurface(m)
+      m.userData.surface = surfaceFor(m.userData.original, override)
+      m.material = materialFor(shading, m.userData.surface)
     })
     invalidate()
-  }, [root, shading])
+  }, [root, shading, override])
+
+  // Shade Smooth / Auto Smooth: normals rebuilt in a worker, cached per mode.
+  const shade = obj.shade
+  useEffect(() => {
+    let cancelled = false
+    const meshes: Mesh[] = []
+    root.traverse((o) => (o as Mesh).isMesh && meshes.push(o as Mesh))
+    const apply = (m: Mesh, g: BufferGeometry) => {
+      m.geometry = g
+      if (!g.boundsTree) idle(() => !cancelled && !g.boundsTree && g.computeBoundsTree())
+    }
+    for (const m of meshes) {
+      const geos = m.userData.geos as Record<string, BufferGeometry | Promise<BufferGeometry>>
+      const cached = geos[shade]
+      if (cached instanceof BufferGeometry) apply(m, cached)
+      else {
+        const job = (cached as Promise<BufferGeometry> | undefined) ?? reshade(geos.original as BufferGeometry, shade as 'smooth' | 'auto')
+        geos[shade] = job
+        job.then((g) => {
+          geos[shade] = g
+          if (!cancelled) {
+            apply(m, g)
+            invalidate()
+          }
+        })
+      }
+    }
+    invalidate()
+    return () => void (cancelled = true)
+  }, [root, shade])
 
   // Store → Object3D. The gizmo writes the Object3D directly while dragging and commits on release.
   const { position, rotation, scale } = obj.transform
@@ -159,14 +197,14 @@ export const Model = memo(function Model(props: Props) {
   )
 })
 
-/** Restore original materials (for export) and return a function that undoes it. */
+/** Put surface materials (generated or overridden) back for export; returns an undo function. */
 export function withOriginalMaterials(target: Object3D) {
   const swapped: [Mesh, Material | Material[]][] = []
   target.traverse((o) => {
     const m = o as Mesh
-    if (m.isMesh && m.userData.original) {
+    if (m.isMesh && m.userData.surface) {
       swapped.push([m, m.material])
-      m.material = m.userData.original
+      m.material = m.userData.surface
     }
   })
   return () => swapped.forEach(([m, mat]) => (m.material = mat))

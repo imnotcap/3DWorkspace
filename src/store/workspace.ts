@@ -20,6 +20,40 @@ export interface Transform {
   scale: Vec3
 }
 
+/** Blender's Shade Flat / Smooth / Auto Smooth. */
+export type ShadeMode = 'original' | 'smooth' | 'auto'
+
+export interface MaterialOverride {
+  color: string
+  roughness: number
+  metalness: number
+  /** Keep the generated texture and tint it, instead of a flat colour. */
+  keepTexture: boolean
+}
+
+/** Orbit-style camera: spherical around a target (azimuth unwrapped, so turntables can spin 360°). */
+export interface CameraPose {
+  target: Vec3
+  azimuth: number
+  polar: number
+  radius: number
+  /** Focal length in mm (36×24 sensor) */
+  focal: number
+}
+
+export interface CameraKey {
+  frame: number
+  pose: CameraPose
+}
+
+export interface Animation {
+  fps: number
+  start: number
+  end: number
+  interpolation: 'ease' | 'linear'
+  keys: CameraKey[]
+}
+
 export interface SceneObject {
   id: string
   name: string
@@ -31,6 +65,8 @@ export interface SceneObject {
   renderable: boolean
   source: string
   transform: Transform
+  shade: ShadeMode
+  material: MaterialOverride | null
   stats?: MeshStats
   error?: string
 }
@@ -47,7 +83,12 @@ export interface Project {
   name: string
   objects: SceneObject[]
   images: InputImage[]
+  /** null = automatic product framing */
+  camera: CameraPose | null
+  animation: Animation
 }
+
+export type RenderJob = { kind: 'image' | 'video'; done: number; total: number; message: string } | null
 
 export type JobState =
   | { status: 'idle' }
@@ -67,6 +108,11 @@ export interface Settings {
   showStats: boolean
   exposure: number
   envIntensity: number
+  renderWidth: number
+  renderHeight: number
+  transparent: boolean
+  refOpacity: number
+  showTimeline: boolean
 }
 
 /** Undo entry: the active project's object list before a change. */
@@ -87,6 +133,10 @@ interface WorkspaceState {
   settings: Settings
   past: Snapshot[]
   future: Snapshot[]
+  frame: number
+  playing: boolean
+  cameraView: boolean
+  renderJob: RenderJob
 
   // projects
   addProject: () => void
@@ -116,13 +166,23 @@ interface WorkspaceState {
   setPropertyTab: (t: PropertyTab) => void
   setJob: (j: JobState) => void
   updateSettings: (patch: Partial<Settings>) => void
+  // camera + animation (active project)
+  setCamera: (pose: CameraPose | null) => void
+  updateAnimation: (patch: Partial<Animation>) => void
+  setKey: (frame: number, pose: CameraPose) => void
+  removeKey: (frame: number) => void
+  setFrame: (f: number) => void
+  setPlaying: (p: boolean) => void
+  setCameraView: (v: boolean) => void
+  setRenderJob: (j: RenderJob) => void
 }
 
 const HISTORY_LIMIT = 64
 
 export const uid = () => Math.random().toString(36).slice(2, 10)
 export const IDENTITY: Transform = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }
-const newProject = (name: string): Project => ({ id: uid(), name, objects: [], images: [] })
+export const DEFAULT_ANIMATION: Animation = { fps: 30, start: 0, end: 120, interpolation: 'ease', keys: [] }
+const newProject = (name: string): Project => ({ id: uid(), name, objects: [], images: [], camera: null, animation: DEFAULT_ANIMATION })
 
 /** Blender-style unique names: Mesh, Mesh.001, Mesh.002 … */
 function uniqueName(base: string, taken: string[]) {
@@ -152,18 +212,27 @@ export const useWorkspace = create<WorkspaceState>()(
       job: { status: 'idle' },
       past: [],
       future: [],
+      frame: 0,
+      playing: false,
+      cameraView: false,
+      renderJob: null,
       settings: {
         providerId: 'hf-space',
-        spaceId: 'tencent/Hunyuan3D-2mv',
+        spaceId: 'tencent/Hunyuan3D-2.1',
         hfToken: '',
         workerUrl: 'http://localhost:8000',
-        quality: 'standard',
+        quality: 'high',
         removeBackground: true,
         seed: null,
         showGrid: true,
         showStats: true,
         exposure: 1,
         envIntensity: 1,
+        renderWidth: 3840,
+        renderHeight: 2160,
+        transparent: false,
+        refOpacity: 0,
+        showTimeline: true,
       },
 
       addProject: () =>
@@ -216,6 +285,8 @@ export const useWorkspace = create<WorkspaceState>()(
                 visible: true,
                 renderable: true,
                 transform: IDENTITY,
+                shade: 'auto',
+                material: null,
               },
             ],
           })),
@@ -270,18 +341,29 @@ export const useWorkspace = create<WorkspaceState>()(
           }
         }),
 
+      // First image becomes Front; the rest default to Detail until the user tags them as a side view.
       addImages: (files) =>
+        set((s) =>
+          patchActive(s, (p) => {
+            let hasFront = p.images.some((i) => i.view === 'front')
+            const added = files
+              .filter((f) => f.type.startsWith('image/'))
+              .map((file) => {
+                const view: ViewTag = hasFront ? 'detail' : 'front'
+                hasFront = true
+                return { id: uid(), file, url: URL.createObjectURL(file), view }
+              })
+            return { ...p, images: [...p.images, ...added] }
+          }),
+        ),
+      // A geometry view can only be held by one image; the previous holder becomes Detail.
+      setImageView: (id, view) =>
         set((s) =>
           patchActive(s, (p) => ({
             ...p,
-            images: [
-              ...p.images,
-              ...files.filter((f) => f.type.startsWith('image/')).map((file) => ({ id: uid(), file, url: URL.createObjectURL(file), view: 'auto' as ViewTag })),
-            ],
+            images: p.images.map((i) => (i.id === id ? { ...i, view } : view !== 'detail' && i.view === view ? { ...i, view: 'detail' as ViewTag } : i)),
           })),
         ),
-      setImageView: (id, view) =>
-        set((s) => patchActive(s, (p) => ({ ...p, images: p.images.map((i) => (i.id === id ? { ...i, view } : i)) }))),
       removeImage: (id) =>
         set((s) =>
           patchActive(s, (p) => {
@@ -303,10 +385,38 @@ export const useWorkspace = create<WorkspaceState>()(
       setPropertyTab: (propertyTab) => set({ propertyTab }),
       setJob: (job) => set({ job }),
       updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
+
+      setCamera: (camera) => set((s) => patchActive(s, (p) => ({ ...p, camera }))),
+      updateAnimation: (patch) => set((s) => patchActive(s, (p) => ({ ...p, animation: { ...p.animation, ...patch } }))),
+      setKey: (frame, pose) =>
+        set((s) =>
+          patchActive(s, (p) => ({
+            ...p,
+            animation: { ...p.animation, keys: [...p.animation.keys.filter((k) => k.frame !== frame), { frame, pose }].sort((a, b) => a.frame - b.frame) },
+          })),
+        ),
+      removeKey: (frame) => set((s) => patchActive(s, (p) => ({ ...p, animation: { ...p.animation, keys: p.animation.keys.filter((k) => k.frame !== frame) } }))),
+      setFrame: (frame) => set({ frame }),
+      setPlaying: (playing) => set({ playing }),
+      setCameraView: (cameraView) => set({ cameraView }),
+      setRenderJob: (renderJob) => set({ renderJob }),
     }),
     {
       name: 'workspace',
-      version: 1,
+      version: 2,
+      // v2: textured PBR model becomes the default (2mv is shape-only); new render settings.
+      migrate: (persisted, version) => {
+        const p = persisted as { settings?: Partial<Settings>; shading?: ShadingMode }
+        if (version < 2 && p.settings) {
+          if (p.settings.spaceId === 'tencent/Hunyuan3D-2mv') p.settings.spaceId = 'tencent/Hunyuan3D-2.1'
+          if (p.settings.quality === 'standard') p.settings.quality = 'high'
+        }
+        return p as never
+      },
+      merge: (persisted, current) => {
+        const p = persisted as { settings?: Partial<Settings>; shading?: ShadingMode } | undefined
+        return { ...current, ...p, settings: { ...current.settings, ...p?.settings } }
+      },
       // Preferences only; projects and meshes persist to IndexedDB (lib/persistence.ts).
       partialize: (s) => ({ settings: s.settings, shading: s.shading }),
     },
