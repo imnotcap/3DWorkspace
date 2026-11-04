@@ -9,3 +9,6 @@ __pycache__/
 
 # Downloaded at build time by scripts/fetch-textures.mjs
 public/textures/
+
+# Downloaded at build time by scripts/fetch-models.mjs
+public/models/

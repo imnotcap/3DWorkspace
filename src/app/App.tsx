@@ -1,14 +1,18 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Group, Panel, Separator } from 'react-resizable-panels'
 import { actions } from '@/lib/actions'
-import { InputsPanel } from '@/panels/InputsPanel'
-import { Outliner } from '@/panels/Outliner'
+import { cn } from '@/lib/cn'
+import { Inspector } from '@/panels/Inspector'
+import { PlanToolbar } from '@/panels/PlanToolbar'
+import { Sidebar } from '@/panels/Sidebar'
 import { StatusBar } from '@/panels/StatusBar'
 import { TabBar } from '@/panels/TabBar'
 import { ToolStrip } from '@/panels/ToolStrip'
 import { Timeline } from '@/panels/Timeline'
-import { CameraFrame, EmptyState, JobCard, RenderProgress, StatsOverlay, ViewportHeader, ViewportSideStrip } from '@/panels/ViewportOverlays'
-import { useWorkspace } from '@/store/workspace'
+import { CameraFrame, JobCard, RenderProgress, StatsOverlay, ViewportHeader, ViewportSideStrip } from '@/panels/ViewportOverlays'
+import { PlanEditor } from '@/plan/PlanEditor'
+import { tourFrames } from '@/plan/tour'
+import { activeProject, useWorkspace } from '@/store/workspace'
 import { useHotkeys } from './useHotkeys'
 
 // three.js is the heaviest chunk; split it so the shell paints first.
@@ -20,10 +24,28 @@ const Handle = ({ vertical }: { vertical?: boolean }) => (
   </Separator>
 )
 
+/** The timeline covers the whole walkthrough while the camera follows the tour. */
+function useTourLength() {
+  useEffect(
+    () =>
+      useWorkspace.subscribe((s, prev) => {
+        const p = activeProject(s)
+        const q = activeProject(prev)
+        if (p.tour === q.tour && p.levels === q.levels && p.useTour === q.useTour && p.animation.fps === q.animation.fps) return
+        if (!p.useTour || p.tour.points.length < 2) return
+        const end = tourFrames(p, p.animation.fps) - 1
+        if (p.animation.start !== 0 || p.animation.end !== end) s.updateAnimation({ start: 0, end })
+      }),
+    [],
+  )
+}
+
 export function App() {
   useHotkeys()
+  useTourLength()
   const [dragging, setDragging] = useState(false)
   const showTimeline = useWorkspace((s) => s.settings.showTimeline)
+  const view = useWorkspace((s) => s.view)
 
   return (
     <div className="flex h-full flex-col bg-app">
@@ -31,28 +53,37 @@ export function App() {
       <div className="flex min-h-0 flex-1 gap-1 px-1">
         <ToolStrip />
         <Group orientation="horizontal" className="min-w-0 flex-1">
-          <Panel minSize="40" defaultSize="78">
+          <Panel minSize="40" defaultSize="76">
             <Group orientation="vertical">
               <Panel minSize="30">
-                <div
-                  className="relative size-full overflow-hidden rounded-lg bg-viewport"
-                  onDragEnter={(e) => (e.preventDefault(), setDragging(true))}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    setDragging(false)
-                    actions.handleDrop([...e.dataTransfer.files])
-                  }}
-                >
-                  <Suspense fallback={null}>
-                    <Viewport />
-                  </Suspense>
-                  <ViewportHeader />
-                  <ViewportSideStrip />
-                  <StatsOverlay />
-                  <CameraFrame />
-                  <EmptyState dragging={dragging} />
+                <div className="relative flex size-full flex-col overflow-hidden rounded-lg bg-panel">
+                  <PlanToolbar />
+                  <div className="flex min-h-0 flex-1 gap-1">
+                    {/* Both stay mounted: renders and the PDF need the 3D view even when only the plan shows. */}
+                    <div className={cn('relative min-w-0 overflow-hidden rounded-lg', view === '3d' ? 'invisible absolute size-0' : 'flex-1')}>
+                      <PlanEditor />
+                    </div>
+                    <div
+                      className={cn('relative min-w-0 overflow-hidden rounded-lg bg-viewport', view === 'plan' ? 'pointer-events-none invisible absolute size-px' : 'flex-1')}
+                      onDragEnter={(e) => (e.preventDefault(), setDragging(true))}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        setDragging(false)
+                        actions.handleDrop([...e.dataTransfer.files])
+                      }}
+                    >
+                      <Suspense fallback={null}>
+                        <Viewport />
+                      </Suspense>
+                      <ViewportHeader />
+                      <ViewportSideStrip />
+                      <StatsOverlay />
+                      <CameraFrame />
+                      {dragging && <div className="pointer-events-none absolute inset-2 rounded-lg border-2 border-dashed border-accent/70" />}
+                    </div>
+                  </div>
                   <JobCard />
                   <RenderProgress />
                 </div>
@@ -68,14 +99,14 @@ export function App() {
             </Group>
           </Panel>
           <Handle />
-          <Panel minSize="240px" defaultSize="22" maxSize="40">
+          <Panel minSize="260px" defaultSize="24" maxSize="40">
             <Group orientation="vertical">
-              <Panel defaultSize="58" minSize="20" className="rounded-lg bg-panel">
-                <Outliner />
+              <Panel defaultSize="52" minSize="20" className="rounded-lg bg-panel">
+                <Sidebar />
               </Panel>
               <Handle vertical />
-              <Panel defaultSize="42" minSize="25" className="rounded-lg bg-panel">
-                <InputsPanel />
+              <Panel defaultSize="48" minSize="20" className="overflow-y-auto rounded-lg bg-panel">
+                <Inspector />
               </Panel>
             </Group>
           </Panel>

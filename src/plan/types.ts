@@ -1,0 +1,94 @@
+// House plan data. Plan coordinates are metres: x → world X, y → world Z (y grows towards the viewer / down on screen).
+
+export type Vec2 = [number, number]
+
+/** A surface finish: a colour, optionally on a material from the library (oak floor, tiles…). */
+export interface Finish {
+  color: string
+  preset?: string
+}
+
+export interface Level {
+  id: string
+  name: string
+  /** Height of this floor's top surface above ground (m). */
+  elevation: number
+  /** Floor-to-ceiling height (m). */
+  height: number
+  /** Floor slab thickness under this level (m). */
+  slab: number
+}
+
+export interface Wall {
+  id: string
+  levelId: string
+  a: Vec2
+  b: Vec2
+  thickness: number
+  /** Overrides the level's ceiling height (half-height walls, railings). */
+  height?: number
+  /** Accent paint for one whole side (left = left of a → b), over the rooms' wall colour. */
+  paint?: { left?: Finish; right?: Finish }
+}
+
+export type OpeningKind = 'door' | 'double-door' | 'sliding-door' | 'window' | 'wide-window' | 'french-window' | 'archway'
+
+export interface Opening {
+  id: string
+  wallId: string
+  kind: OpeningKind
+  /** Centre, in metres from the wall's start (a). */
+  t: number
+  width: number
+  height: number
+  /** Bottom of the opening above the floor (0 for doors). */
+  sill: number
+  /** Door hinges at the start (a) side or the end (b) side of the opening. */
+  hinge: 'a' | 'b'
+  /** The door swings to the wall's left or right side. */
+  side: 'left' | 'right'
+  /** How far the door/window is open in 3D, 0..1. */
+  open: number
+  frame: Finish
+}
+
+/** Settings for a room the plan found; matched to it by a point inside it. */
+export interface RoomInfo {
+  id: string
+  levelId: string
+  anchor: Vec2
+  name: string
+  floor: Finish
+  walls: Finish
+  ceiling: Finish
+}
+
+export interface TourPoint {
+  id: string
+  levelId: string
+  p: Vec2
+}
+
+export interface Tour {
+  points: TourPoint[]
+  /** Walking speed, m/s. */
+  speed: number
+  eyeHeight: number
+  /** Lens, mm (full frame). */
+  focal: number
+}
+
+export const OPENING_DEFAULTS: Record<OpeningKind, { label: string; width: number; height: number; sill: number; door: boolean }> = {
+  door: { label: 'Door', width: 0.9, height: 2.1, sill: 0, door: true },
+  'double-door': { label: 'Double door', width: 1.5, height: 2.1, sill: 0, door: true },
+  'sliding-door': { label: 'Sliding door', width: 2.0, height: 2.15, sill: 0, door: true },
+  archway: { label: 'Opening', width: 1.0, height: 2.1, sill: 0, door: true },
+  window: { label: 'Window', width: 1.0, height: 1.3, sill: 0.9, door: false },
+  'wide-window': { label: 'Wide window', width: 2.0, height: 1.4, sill: 0.8, door: false },
+  'french-window': { label: 'French window', width: 1.4, height: 2.2, sill: 0, door: false },
+}
+
+export const DEFAULT_WALL_FINISH: Finish = { color: '#f2efe9' }
+export const DEFAULT_FLOOR_FINISH: Finish = { color: '#c8a27a', preset: 'oak-floor' }
+export const DEFAULT_CEILING_FINISH: Finish = { color: '#fbfaf8' }
+export const EXTERIOR_FINISH: Finish = { color: '#e9e6e0' }

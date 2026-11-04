@@ -1,5 +1,6 @@
 import { Box3, MathUtils, PerspectiveCamera, Sphere, Spherical, Vector3, type Mesh, type Object3D } from 'three'
 import type { Animation, CameraPose, Vec3 } from '@/store/workspace'
+import { viewport } from './bridge'
 export { frameRect } from '@/lib/frame'
 
 /** Full-frame sensor, like Blender's default camera. */
@@ -106,10 +107,17 @@ export function visibleBox(o: Object3D, box = new Box3()) {
   return box
 }
 
-/** Union over top-level objects (parts are inside their model, so they count once). */
+/** Visible including its parents (objects on a hidden floor aren't). */
+export function shown(o: Object3D) {
+  for (let p: Object3D | null = o; p; p = p.parent) if (!p.visible) return false
+  return true
+}
+
+/** Union over top-level objects (parts are inside their model, so they count once) and the house. */
 export function sceneBox(objects: Object3D[]) {
   const box = new Box3()
-  objects.forEach((o) => !o.userData.parentId && visibleBox(o, box))
+  objects.forEach((o) => !o.userData.parentId && shown(o) && visibleBox(o, box))
+  viewport.houses.forEach((h) => shown(h) && visibleBox(h, box))
   if (box.isEmpty()) box.set(new Vector3(-1, 0, -1), new Vector3(1, 2, 1))
   return box
 }

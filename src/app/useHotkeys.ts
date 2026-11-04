@@ -28,6 +28,12 @@ export function useHotkeys() {
       if (e.shiftKey && key === 'arrowright') return actions.jump('end')
 
       switch (key) {
+        case 'v': return s.setPlanTool('select')
+        case 'w': return s.setPlanTool('wall')
+        case 'm': return s.setPlanTool('room')
+        case 'd': return s.setPlanTool('door')
+        case 'o': return s.setPlanTool('window')
+        case 't': return s.setPlanTool('tour')
         case ' ': return e.preventDefault(), actions.togglePlay()
         case '0': return actions.toggleCameraView()
         case 'i': return actions.insertKey()
@@ -42,7 +48,12 @@ export function useHotkeys() {
         case 'z': return actions.cycleShading()
         case 'n': return s.setPropertyTab(s.propertyTab === 'object' ? null : 'object')
         case 'x': case 'delete': case 'backspace': return actions.deleteSelected()
-        case 'escape': return s.propertyTab ? s.setPropertyTab(null) : s.select(null)
+        case 'escape':
+          if (s.placing) return s.setPlacing(null)
+          if (s.planTool !== 'select') return s.setPlanTool('select')
+          if (s.propertyTab) return s.setPropertyTab(null)
+          s.selectPlan(null)
+          return s.select(null)
         case 'f12': return e.preventDefault(), void actions.renderImage()
       }
     }

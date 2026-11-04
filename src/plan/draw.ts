@@ -1,0 +1,260 @@
+// Plan drawing as plain SVG nodes: rendered by the editor (React) and serialised for the PDF.
+import { itemById } from '@/furniture/catalog'
+import type { SceneObject } from '@/store/workspace'
+import { footprint } from './footprint'
+import { add, clampOpening, mul, norm, sub, type PlanGeom } from './geometry'
+import { roomFor } from './levels'
+import { DEFAULT_FLOOR_FINISH, OPENING_DEFAULTS, type Opening, type RoomInfo, type Vec2, type Wall } from './types'
+
+export interface SvgNode {
+  tag: 'g' | 'path' | 'polygon' | 'polyline' | 'line' | 'circle' | 'rect' | 'text'
+  attrs: Record<string, string | number>
+  children?: SvgNode[]
+  text?: string
+}
+
+export interface PlanTheme {
+  wall: string
+  wallStroke: string
+  roomStroke: string
+  text: string
+  subtext: string
+  furnitureFill: string
+  furnitureStroke: string
+  opening: string
+  dim: string
+  ghost: string
+  selected: string
+  /** Room fill: the floor colour mixed to this opacity. */
+  floorAlpha: number
+  font: string
+}
+
+export const DARK_THEME: PlanTheme = {
+  wall: '#d9d6d0',
+  wallStroke: '#d9d6d0',
+  roomStroke: 'none',
+  text: '#e8e6e3',
+  subtext: '#9a9894',
+  furnitureFill: 'rgba(30,30,30,0.85)',
+  furnitureStroke: '#8c8a86',
+  opening: '#d9d6d0',
+  dim: '#7d7b77',
+  ghost: '#3a3a3a',
+  selected: '#4c8dff',
+  floorAlpha: 0.16,
+  font: 'Inter, system-ui, sans-serif',
+}
+
+export const PAPER_THEME: PlanTheme = {
+  wall: '#1d1d1f',
+  wallStroke: '#1d1d1f',
+  roomStroke: 'none',
+  text: '#1d1d1f',
+  subtext: '#6b6b6e',
+  furnitureFill: '#ffffff',
+  furnitureStroke: '#7a7a7e',
+  opening: '#1d1d1f',
+  dim: '#8a8a8e',
+  ghost: '#e2e2e2',
+  selected: '#2f6fed',
+  floorAlpha: 0.22,
+  // svg2pdf maps the generic family to the PDF's built-in Helvetica.
+  font: 'sans-serif',
+}
+
+const pts = (p: Vec2[]) => p.map((q) => `${q[0].toFixed(4)},${q[1].toFixed(4)}`).join(' ')
+
+export interface DrawInput {
+  geom: PlanGeom
+  levelId: string
+  walls: Wall[]
+  openings: Opening[]
+  rooms: RoomInfo[]
+  objects: SceneObject[]
+  /** Walls of the level below, drawn faintly for alignment. */
+  below?: Wall[]
+  /** Pixels per metre, so text and strokes keep a readable size. */
+  scale: number
+  theme: PlanTheme
+  selection?: { kind: string; id: string; at?: Vec2 } | null
+  selectedObject?: string | null
+  /** Wall lengths (always on paper; on screen when zoomed in). */
+  dimensions: boolean
+  /** Interactive hit areas (editor only). */
+  interactive?: boolean
+}
+
+export function formatLength(m: number) {
+  return m >= 1 ? `${m.toFixed(2)} m` : `${Math.round(m * 100)} cm`
+}
+
+export function drawPlan(i: DrawInput): SvgNode[] {
+  const { geom, theme: T, scale } = i
+  const px = (n: number) => n / scale // n screen pixels in metres
+  const out: SvgNode[] = []
+
+  // Level below, for alignment.
+  if (i.below?.length)
+    out.push({
+      tag: 'g',
+      attrs: { opacity: 0.9 },
+      children: i.below.map((w) => ({ tag: 'line', attrs: { x1: w.a[0], y1: w.a[1], x2: w.b[0], y2: w.b[1], stroke: T.ghost, 'stroke-width': w.thickness, 'stroke-linecap': 'square' } })),
+    })
+
+  // Rooms: floor tint, name and area.
+  const labels: SvgNode[] = []
+  geom.faces.forEach((f) => {
+    const info = roomFor(f, i.rooms, i.levelId)
+    const floor = info?.floor ?? DEFAULT_FLOOR_FINISH
+    const sel = i.selection?.kind === 'room' && i.selection.at && insideFace(i.selection.at, f.polygon)
+    out.push({
+      tag: 'polygon',
+      attrs: { points: pts(f.inner.length >= 3 ? f.inner : f.polygon), fill: sel ? T.selected : floor.color, 'fill-opacity': sel ? 0.35 : T.floorAlpha, stroke: sel ? T.selected : T.roomStroke, 'stroke-width': px(2), ...(i.interactive ? { 'data-kind': 'room', 'data-x': f.center[0], 'data-y': f.center[1] } : {}) },
+    })
+    const fs = Math.max(px(12), 0.12)
+    labels.push({ tag: 'text', attrs: { x: f.center[0], y: f.center[1] - fs * 0.15, 'font-size': fs, 'font-family': T.font, 'font-weight': 'bold', fill: T.text, 'text-anchor': 'middle', 'pointer-events': 'none' }, text: info?.name ?? 'Room' })
+    labels.push({ tag: 'text', attrs: { x: f.center[0], y: f.center[1] + fs * 1.05, 'font-size': fs * 0.82, 'font-family': T.font, fill: T.subtext, 'text-anchor': 'middle', 'pointer-events': 'none' }, text: `${f.area.toFixed(1)} m²` })
+  })
+
+  // Furniture (drawn under walls, so pieces against a wall read cleanly).
+  for (const o of i.objects) {
+    const fp = footprint(o)
+    const sel = i.selectedObject === o.id
+    const item = itemById(o.furniture?.item)
+    const isRug = o.furniture?.item === 'rug'
+    out.push({
+      tag: 'polygon',
+      attrs: {
+        points: pts(fp.corners),
+        fill: isRug ? 'none' : T.furnitureFill,
+        stroke: sel ? T.selected : T.furnitureStroke,
+        'stroke-width': px(sel ? 2 : 1),
+        'stroke-dasharray': isRug ? `${px(4)} ${px(3)}` : 'none',
+        ...(i.interactive ? { 'data-kind': 'object', 'data-id': o.id } : {}),
+      },
+    })
+    // A short line marks the front.
+    const f0 = fp.at(-fp.w * 0.3, fp.d / 2 - Math.min(0.06, fp.d * 0.2))
+    const f1 = fp.at(fp.w * 0.3, fp.d / 2 - Math.min(0.06, fp.d * 0.2))
+    if (!isRug) out.push({ tag: 'line', attrs: { x1: f0[0], y1: f0[1], x2: f1[0], y2: f1[1], stroke: T.furnitureStroke, 'stroke-width': px(1), 'pointer-events': 'none' } })
+    if (Math.min(fp.w, fp.d) * scale > 34) {
+      const fs = Math.min(px(10), fp.d * 0.25, 0.1)
+      labels.push({ tag: 'text', attrs: { x: fp.c[0], y: fp.c[1] + fs * 0.35, 'font-size': fs, 'font-family': T.font, fill: T.subtext, 'text-anchor': 'middle', 'pointer-events': 'none' }, text: o.name.replace(/\.\d{3}$/, '') || item?.name || '' })
+    }
+  }
+
+  // Walls: solid footprints; openings punched through and drawn as symbols.
+  for (const g of geom.walls.values()) {
+    const sel = i.selection?.kind === 'wall' && i.selection.id === g.wall.id
+    out.push({
+      tag: 'polygon',
+      attrs: { points: pts([g.la, g.lb, g.rb, g.ra]), fill: sel ? T.selected : T.wall, stroke: sel ? T.selected : T.wallStroke, 'stroke-width': px(0.5), ...(i.interactive ? { 'data-kind': 'wall', 'data-id': g.wall.id } : {}) },
+    })
+  }
+  for (const c of geom.caps) out.push({ tag: 'polygon', attrs: { points: pts(c), fill: T.wall, stroke: T.wall, 'stroke-width': px(0.5) } })
+
+  for (const o of i.openings) {
+    const g = geom.walls.get(o.wallId)
+    if (!g) continue
+    out.push(...openingSymbol(o, g.wall, g.d, g.n, g.h, g.len, T, px, i.selection?.kind === 'opening' && i.selection.id === o.id, !!i.interactive))
+  }
+
+  // Wall lengths, outside each wall.
+  if (i.dimensions)
+    for (const g of geom.walls.values()) {
+      // Outside walls always; inside walls only when selected (else they crowd the room labels).
+      const exterior = g.segments.some((s) => s.left === null || s.right === null)
+      if (g.len < 0.3 || (!exterior && !(i.selection?.kind === 'wall' && i.selection.id === g.wall.id))) continue
+      const mid = add(g.wall.a, mul(g.d, g.len / 2))
+      // Put the label on the side that has no room (outside), else the right side.
+      const outside = g.segments.some((s) => s.left === null) ? 1 : -1
+      const off = add(mid, mul(g.n, outside * (g.h + px(11))))
+      let ang = (Math.atan2(g.d[1], g.d[0]) * 180) / Math.PI
+      if (ang > 90 || ang < -90) ang += 180
+      out.push({ tag: 'text', attrs: { x: off[0], y: off[1], 'font-size': px(10), 'font-family': T.font, fill: T.dim, 'text-anchor': 'middle', 'dominant-baseline': 'middle', transform: `rotate(${ang.toFixed(2)} ${off[0].toFixed(4)} ${off[1].toFixed(4)})`, 'pointer-events': 'none' }, text: formatLength(g.len) })
+    }
+
+  out.push(...labels)
+  return out
+}
+
+function insideFace(p: Vec2, poly: Vec2[]) {
+  let inside = false
+  for (let a = 0, b = poly.length - 1; a < poly.length; b = a++) {
+    const [xi, yi] = poly[a]
+    const [xj, yj] = poly[b]
+    if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside
+  }
+  return inside
+}
+
+function openingSymbol(o: Opening, w: Wall, d: Vec2, n: Vec2, h: number, len: number, T: PlanTheme, px: (n: number) => number, sel: boolean, interactive: boolean): SvgNode[] {
+  const t = clampOpening(o.t, o.width, len)
+  const c = add(w.a, mul(d, t))
+  const half = o.width / 2
+  const A = add(c, mul(d, -half))
+  const B = add(c, mul(d, half))
+  const nodes: SvgNode[] = []
+  const stroke = sel ? T.selected : T.opening
+  const sw = px(1.2)
+  // Gap in the wall (paper colour), then the jambs.
+  const gap = [add(A, mul(n, h + px(0.6))), add(B, mul(n, h + px(0.6))), add(B, mul(n, -h - px(0.6))), add(A, mul(n, -h - px(0.6)))]
+  nodes.push({ tag: 'polygon', attrs: { points: pts(gap), fill: T === PAPER_THEME ? '#ffffff' : '#141414', stroke: 'none', ...(interactive ? { 'data-kind': 'opening', 'data-id': o.id } : {}) } })
+  for (const P of [A, B]) nodes.push({ tag: 'line', attrs: { x1: add(P, mul(n, h))[0], y1: add(P, mul(n, h))[1], x2: add(P, mul(n, -h))[0], y2: add(P, mul(n, -h))[1], stroke, 'stroke-width': sw, 'pointer-events': 'none' } })
+
+  const kind = OPENING_DEFAULTS[o.kind]
+  const s = o.side === 'left' ? 1 : -1
+  const leaf = (hinge: Vec2, toward: Vec2, r: number) => {
+    // Door leaf drawn open at 90° towards its side, with the swing arc back to the wall.
+    const open = add(hinge, mul(n, s * r))
+    const closed = add(hinge, mul(norm(sub(toward, hinge)), r))
+    const sweep = (() => {
+      const v1 = sub(open, hinge)
+      const v2 = sub(closed, hinge)
+      return v1[0] * v2[1] - v1[1] * v2[0] > 0 ? 1 : 0
+    })()
+    nodes.push({ tag: 'line', attrs: { x1: hinge[0], y1: hinge[1], x2: open[0], y2: open[1], stroke, 'stroke-width': sw * 1.4, 'pointer-events': 'none' } })
+    nodes.push({ tag: 'path', attrs: { d: `M ${open[0]} ${open[1]} A ${r} ${r} 0 0 ${sweep} ${closed[0]} ${closed[1]}`, fill: 'none', stroke, 'stroke-width': sw * 0.8, 'stroke-dasharray': `${px(3)} ${px(2)}`, 'pointer-events': 'none' } })
+  }
+  const faceA = add(A, mul(n, s * h))
+  const faceB = add(B, mul(n, s * h))
+  if (o.kind === 'door') o.hinge === 'a' ? leaf(faceA, faceB, o.width) : leaf(faceB, faceA, o.width)
+  else if (o.kind === 'double-door' || o.kind === 'french-window') {
+    leaf(faceA, add(faceA, mul(d, half)), half)
+    leaf(faceB, add(faceB, mul(d, -half)), half)
+  } else if (o.kind === 'sliding-door') {
+    for (const [k, off] of [
+      [0, 0.25],
+      [1, -0.25],
+    ] as const) {
+      const p0 = add(add(A, mul(d, k === 0 ? 0 : half)), mul(n, off * h * 2))
+      const p1 = add(p0, mul(d, half + 0.05))
+      nodes.push({ tag: 'line', attrs: { x1: p0[0], y1: p0[1], x2: p1[0], y2: p1[1], stroke, 'stroke-width': sw * 1.6, 'pointer-events': 'none' } })
+    }
+  } else if (!kind.door) {
+    // Window: frame lines on both faces and the glass in the middle.
+    for (const off of [h * 0.55, 0, -h * 0.55]) {
+      const p0 = add(A, mul(n, off))
+      const p1 = add(B, mul(n, off))
+      nodes.push({ tag: 'line', attrs: { x1: p0[0], y1: p0[1], x2: p1[0], y2: p1[1], stroke, 'stroke-width': off === 0 ? sw * 0.8 : sw, 'pointer-events': 'none' } })
+    }
+  }
+  return nodes
+}
+
+/** Serialise nodes to an SVG string (for the PDF and file export). */
+export function svgString(nodes: SvgNode[], viewBox: [number, number, number, number], width: number, height: number, background?: string) {
+  const esc = (v: string | number) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
+  const ser = (n: SvgNode): string => {
+    const a = Object.entries(n.attrs)
+      .filter(([k]) => !k.startsWith('data-'))
+      .map(([k, v]) => `${k}="${esc(v)}"`)
+      .join(' ')
+    const inner = n.text != null ? esc(n.text) : (n.children ?? []).map(ser).join('')
+    return `<${n.tag} ${a}>${inner}</${n.tag}>`
+  }
+  const bg = background ? `<rect x="${viewBox[0]}" y="${viewBox[1]}" width="${viewBox[2]}" height="${viewBox[3]}" fill="${background}"/>` : ''
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox.join(' ')}" width="${width}" height="${height}">${bg}${nodes.map(ser).join('')}</svg>`
+}
+
