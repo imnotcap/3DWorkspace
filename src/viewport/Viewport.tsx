@@ -205,6 +205,28 @@ function CameraRig() {
   return null
 }
 
+/**
+ * Depth precision follows the view: the near plane scales with the distance to what you orbit
+ * around. A fixed 5 cm near plane leaves too little depth precision 20–30 m away, and surfaces a
+ * few millimetres apart (a print on its frame, a frame on the wall) flicker as you turn.
+ */
+function DepthRange() {
+  const camera = useThree((s) => s.camera) as PerspectiveCamera
+  const controls = useThree((s) => s.controls) as OrbitControlsImpl | null
+  useFrame(() => {
+    if (!controls || useWorkspace.getState().cameraView) return
+    const d = camera.position.distanceTo(controls.target)
+    const near = Math.min(1, Math.max(0.02, d / 120))
+    const far = Math.max(200, d * 60)
+    if (Math.abs(camera.near - near) > near * 0.05 || camera.far !== far) {
+      camera.near = near
+      camera.far = far
+      camera.updateProjectionMatrix()
+    }
+  })
+  return null
+}
+
 /** Registers export so menus and hotkeys can call it. */
 function Bridge() {
   const { gl, scene, camera, invalidate } = useThree()
@@ -476,6 +498,7 @@ export function Viewport() {
       <Background />
       <SceneContent />
       <CameraRig />
+      <DepthRange />
       <Bridge />
       <RenderBridge />
       <FinalRender />

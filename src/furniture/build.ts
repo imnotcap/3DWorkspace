@@ -622,8 +622,9 @@ function wallArt(k: Kit, w: number, h: number, d: number) {
   }
   const tex = new CanvasTexture(c)
   tex.colorSpace = SRGBColorSpace
-  const print = new Mesh(new PlaneGeometry(w - 0.08, h - 0.08), new MeshStandardMaterial({ name: 'Print', map: tex, roughness: 0.85 }))
-  print.position.set(0, h / 2, d / 2 + 0.001)
+  // A few mm proud of the frame, and drawn in front of it at equal depth (polygon offset): never flickers.
+  const print = new Mesh(new PlaneGeometry(w - 0.08, h - 0.08), new MeshStandardMaterial({ name: 'Print', map: tex, roughness: 0.85, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }))
+  print.position.set(0, h / 2, d / 2 + 0.003)
   k.group.add(print)
 }
 
