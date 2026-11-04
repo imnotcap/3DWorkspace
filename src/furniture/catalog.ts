@@ -92,6 +92,8 @@ export const CATALOG: CatalogItem[] = [
   // Office
   { id: 'desk', name: 'Desk', category: 'Office', size: [1.4, 0.75, 0.7], kind: 'parametric', mount: 'floor', slots: { Top: OAK, Frame: BLACK_METAL } },
   { id: 'office-chair', name: 'Office chair', category: 'Office', size: [0.66, 1.1, 0.66], kind: 'parametric', mount: 'floor', slots: { Fabric: W('#2c2f33', 'wool'), Frame: BLACK_METAL } },
+  { id: 'screen-wall', name: 'Skærmvæg', category: 'Office', size: [1.0, 1.7, 0.45], kind: 'model', mount: 'floor', model: { file: 'own/Skaermvaeg_Eco_Pure.glb', credit: 'Eco Pure 1:1 · own model', license: 'Own' }, note: 'Eco Pure, 100 × 170 cm. The fabric is its own surface: pick any colour or material.' },
+  { id: 'sit-stand-desk', name: 'Hævesænke bord', category: 'Office', size: [1.6, 0.745, 0.8], kind: 'model', mount: 'floor', model: { file: 'own/Haevesaenkebord_160x80.glb', credit: 'Sit-stand desk 160 × 80 · own model', license: 'Own' }, note: '160 × 80 cm, top at 74.5 cm. Black frame; the tabletop is its own surface.' },
   { id: 'wall-shelf', name: 'Wall shelf', category: 'Office', size: [0.9, 0.03, 0.24], kind: 'parametric', mount: 'wall', y: 1.5, slots: { Wood: OAK } },
 
   // Lighting

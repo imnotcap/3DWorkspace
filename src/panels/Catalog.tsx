@@ -63,7 +63,7 @@ export function Catalog() {
 
   const items = useMemo(
     () =>
-      CATALOG.filter((i) => (cat === 'All' || i.category === cat) && i.name.toLowerCase().includes(q.trim().toLowerCase()) && (i.kind === 'parametric' || !files || files.has(i.model!.file))),
+      CATALOG.filter((i) => (cat === 'All' || i.category === cat) && i.name.toLowerCase().includes(q.trim().toLowerCase()) && (i.kind === 'parametric' || i.model!.file.startsWith('own/') || !files || files.has(i.model!.file))),
     [cat, q, files],
   )
 
