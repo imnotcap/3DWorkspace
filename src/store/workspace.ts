@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { GenerateProgress, ProviderId, Quality, ViewTag } from '@/generation/types'
+import type { GenerateProgress, Quality, ViewTag } from '@/generation/types'
 
 export type ShadingMode = 'wireframe' | 'solid' | 'material' | 'rendered'
 export type Tool = 'select' | 'translate' | 'rotate' | 'scale'
@@ -86,6 +86,10 @@ export interface Primitive {
 export interface SceneObject {
   id: string
   name: string
+  /** The model or group this object belongs to; its transform is relative to that parent. */
+  parentId?: string | null
+  /** A container (a whole SAM 3D model, or a folder of parts like "Legs"): no geometry of its own. */
+  isGroup?: boolean
   /** GLB bytes; persisted to IndexedDB. Absent for primitives. */
   blob?: Blob
   /** blob: URL for the loader, derived from `blob` */
@@ -104,6 +108,8 @@ export interface SceneObject {
   stats?: MeshStats
   /** Built at real size (metres); the viewport doesn't rescale it. */
   exact?: boolean
+  /** Use the GLB's own coordinates as they are (no recentring): its transform was computed for them (SAM 3D parts). */
+  keepOrigin?: boolean
   /** Claude parts description, for refining. */
   spec?: unknown
   /** Transform keyframes; when present they drive the object instead of `transform`. */
@@ -113,6 +119,42 @@ export interface SceneObject {
   /** Scale to this real size once the mesh has loaded (from the project's spec dimensions). */
   fitSize?: RealSize | null
   error?: string
+}
+
+/** One part of the Front photo, as SAM 3 split it (or as you clicked it). */
+export interface Segment {
+  id: string
+  name: string
+  /** Folder name for repeated parts (Leg 1…4 → "Leg"). */
+  group?: string | null
+  color: string
+  /** PNG, white = part, same size as the photo sent to the server. */
+  mask: Blob
+  area: number
+  /** [x0, y0, x1, y1] in photo pixels */
+  bbox: [number, number, number, number]
+  enabled: boolean
+}
+
+export interface Segmentation {
+  /** The Front image these masks belong to. */
+  imageId: string
+  width: number
+  height: number
+  objectLabel: string
+  segments: Segment[]
+  /** What SAM 3 was asked for; if you change it before generating, the parts are found again… */
+  prompt: PartPrompt & { auto: boolean }
+  /** …unless you edited the parts by hand (then your edits are kept). */
+  edited: boolean
+}
+
+/** What to look for in the Front photo. */
+export interface PartPrompt {
+  /** The object, e.g. "office chair". */
+  object: string
+  /** Its parts, comma-separated, e.g. "seat, backrest, armrest, wheel". Empty = find them automatically. */
+  parts: string
 }
 
 export interface InputImage {
@@ -131,9 +173,11 @@ export interface Project {
   camera: CameraPose | null
   /** Spec-sheet dimensions applied to every mesh generated in this project. */
   realSize: RealSize | null
-  /** Default render angle (radians), e.g. estimated from the Front photo. */
+  /** Default render angle (radians), e.g. the Front photo's camera. */
   autoAngles?: { azimuth: number; polar: number } | null
   animation: Animation
+  prompt: PartPrompt
+  segmentation: Segmentation | null
 }
 
 export type RenderJob = { kind: 'image' | 'video'; done: number; total: number; message: string } | null
@@ -144,18 +188,18 @@ export type JobState =
   | { status: 'error'; message: string; hint?: string }
   | { status: 'done'; message: string }
 
+/** How a SAM 3D model is stood upright: by its main part's own up axis, or by the photo's horizon. */
+export type LevelMode = 'part' | 'camera'
+
 export interface Settings {
-  providerId: ProviderId
-  spaceId: string
+  /** Where the SAM 3D server runs: a URL (http://localhost:7860) or a Hugging Face Space id (user/space). */
+  sam3dServer: string
   hfToken: string
-  workerUrl: string
-  photogrammetryUrl: string
-  anthropicKey: string
-  claudeModel: 'claude-opus-5-5' | 'claude-sonnet-5-5'
-  claudeSelfCheck: boolean
   quality: Quality
-  removeBackground: boolean
   seed: number | null
+  level: LevelMode
+  /** With no part names, let SAM 3 find the parts (else the whole object is one part). */
+  autoParts: boolean
   showGrid: boolean
   showStats: boolean
   exposure: number
@@ -200,6 +244,10 @@ interface WorkspaceState {
   replaceProjects: (projects: Project[], activeId: string) => void
   // objects
   addObject: (obj: { name: string; blob?: Blob; primitive?: Primitive; source: string; fitSize?: RealSize | null; exact?: boolean; spec?: unknown; transform?: Transform; material?: MaterialOverride | null }, projectId?: string) => string
+  /** One undo step: a whole hierarchy (model → groups → parts). `parent` indexes into `nodes`; returns the new ids. */
+  addTree: (nodes: TreeNode[], projectId?: string) => string[]
+  /** Move an object into another parent (or to the top level with null), keeping it where it is on screen. */
+  reparent: (id: string, parentId: string | null, transform: Transform) => void
   /** One undo step: remove `id` and add `objects` in its place (Separate into parts). */
   replaceObject: (id: string, objects: Omit<SceneObject, 'id'>[]) => void
   duplicateObject: (id: string) => string | null
@@ -218,6 +266,10 @@ interface WorkspaceState {
   setImageView: (id: string, view: ViewTag) => void
   removeImage: (id: string) => void
   clearImages: () => void
+  // segmentation (active project)
+  setPrompt: (patch: Partial<PartPrompt>) => void
+  setSegmentation: (seg: Segmentation | null, projectId?: string) => void
+  updateSegment: (id: string, patch: Partial<Segment>) => void
   // ui
   setShading: (m: ShadingMode) => void
   setTool: (t: Tool) => void
@@ -240,12 +292,31 @@ interface WorkspaceState {
   setRenderJob: (j: RenderJob) => void
 }
 
+/** A new object in `addTree`; `parent` is the index of its parent in the same list. */
+export type TreeNode = Omit<SceneObject, 'id' | 'parentId'> & { parent?: number }
+
 const HISTORY_LIMIT = 64
 
 export const uid = () => Math.random().toString(36).slice(2, 10)
 export const IDENTITY: Transform = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }
 export const DEFAULT_ANIMATION: Animation = { fps: 30, start: 0, end: 120, interpolation: 'ease', keys: [] }
-const newProject = (name: string): Project => ({ id: uid(), name, objects: [], images: [], camera: null, realSize: null, animation: DEFAULT_ANIMATION })
+export const DEFAULT_PROMPT: PartPrompt = { object: '', parts: '' }
+const newProject = (name: string): Project => ({ id: uid(), name, objects: [], images: [], camera: null, realSize: null, animation: DEFAULT_ANIMATION, prompt: DEFAULT_PROMPT, segmentation: null })
+
+/** `id` and everything nested under it, parents before children. */
+export function subtreeIds(objects: SceneObject[], id: string): string[] {
+  const out = [id]
+  for (let i = 0; i < out.length; i++) for (const o of objects) if (o.parentId === out[i]) out.push(o.id)
+  return out
+}
+
+/** The chain of parents above `id`, nearest first. */
+export function ancestorIds(objects: SceneObject[], id: string): string[] {
+  const out: string[] = []
+  const byId = new Map(objects.map((o) => [o.id, o]))
+  for (let p = byId.get(id)?.parentId; p && !out.includes(p); p = byId.get(p)?.parentId) out.push(p)
+  return out
+}
 
 /** Blender-style unique names: Mesh, Mesh.001, Mesh.002 … */
 function uniqueName(base: string, taken: string[]) {
@@ -280,17 +351,12 @@ export const useWorkspace = create<WorkspaceState>()(
       cameraView: false,
       renderJob: null,
       settings: {
-        providerId: 'hf-space',
-        spaceId: 'microsoft/TRELLIS.2',
+        sam3dServer: 'http://localhost:7860',
         hfToken: '',
-        workerUrl: 'http://localhost:8000',
-        photogrammetryUrl: 'http://localhost:8001',
-        anthropicKey: '',
-        claudeModel: 'claude-opus-5-5',
-        claudeSelfCheck: true,
         quality: 'high',
-        removeBackground: true,
         seed: null,
+        level: 'part',
+        autoParts: true,
         showGrid: true,
         showStats: true,
         exposure: 1,
@@ -355,24 +421,65 @@ export const useWorkspace = create<WorkspaceState>()(
         )
       },
       duplicateObject: (id) => {
-        const src = activeProject(get()).objects.find((o) => o.id === id)
+        const objects = activeProject(get()).objects
+        const src = objects.find((o) => o.id === id)
         if (!src) return null
         get().checkpoint('Duplicate')
-        const nid = uid()
-        // Offset by the object's width so the copy is visible next to the original (Blender would start a grab).
+        // The copy takes everything nested under the original with it.
+        const ids = subtreeIds(objects, id)
+        const fresh = new Map(ids.map((i) => [i, uid()]))
+        const nid = fresh.get(id)!
+        // Top-level copies sit next to the original (Blender would start a grab); parts stay in place, inside the same model.
         const w = (src.stats?.size[0] ?? 0.5) * src.transform.scale[0]
-        const transform = { ...src.transform, position: [src.transform.position[0] + w * 1.1, src.transform.position[1], src.transform.position[2]] as Vec3 }
+        const transform = src.parentId ? src.transform : { ...src.transform, position: [src.transform.position[0] + w * 1.1, src.transform.position[1], src.transform.position[2]] as Vec3 }
         set((s) => ({
-          ...patchActive(s, (p) => ({
-            ...p,
-            objects: [
-              ...p.objects,
-              { ...src, id: nid, name: uniqueName(src.name, p.objects.map((o) => o.name)), url: src.blob ? URL.createObjectURL(src.blob) : undefined, transform, keys: undefined, stats: undefined },
-            ],
-          })),
+          ...patchActive(s, (p) => {
+            const taken = p.objects.map((o) => o.name)
+            const copies = ids.map((i) => {
+              const o = p.objects.find((x) => x.id === i)!
+              const name = uniqueName(o.name, taken)
+              taken.push(name)
+              return {
+                ...o,
+                id: fresh.get(i)!,
+                name,
+                parentId: i === id ? o.parentId : fresh.get(o.parentId!)!,
+                url: o.blob ? URL.createObjectURL(o.blob) : undefined,
+                transform: i === id ? transform : o.transform,
+                keys: i === id ? undefined : o.keys,
+                stats: o.isGroup ? o.stats : undefined,
+              }
+            })
+            return { ...p, objects: [...p.objects, ...copies] }
+          }),
           selectedId: nid,
         }))
         return nid
+      },
+      addTree: (nodes, projectId) => {
+        const target = projectId ?? get().activeProjectId
+        if (target === get().activeProjectId) get().checkpoint('Add')
+        const ids = nodes.map(() => uid())
+        set((s) => ({
+          ...patchProject(s, target, (p) => {
+            const taken = p.objects.map((o) => o.name)
+            const added: SceneObject[] = nodes.map(({ parent, ...n }, i) => {
+              const name = uniqueName(n.name, taken)
+              taken.push(name)
+              return { ...n, id: ids[i], name, parentId: parent === undefined ? null : ids[parent], url: n.blob ? URL.createObjectURL(n.blob) : undefined }
+            })
+            return { ...p, objects: [...p.objects, ...added] }
+          }),
+          selectedId: target === s.activeProjectId ? (ids[0] ?? null) : s.selectedId,
+        }))
+        return ids
+      },
+      reparent: (id, parentId, transform) => {
+        const objects = activeProject(get()).objects
+        // Never into itself or its own descendants.
+        if (parentId && subtreeIds(objects, id).includes(parentId)) return
+        get().checkpoint(parentId ? 'Move into group' : 'Move out of group')
+        set((s) => patchActive(s, (p) => ({ ...p, objects: p.objects.map((o) => (o.id === id ? { ...o, parentId, transform, keys: undefined } : o)) })))
       },
       addObject: ({ name, blob, primitive, source, fitSize, exact, spec, transform, material }, projectId) => {
         const id = uid()
@@ -413,12 +520,16 @@ export const useWorkspace = create<WorkspaceState>()(
         get().updateObject(id, patch)
       },
       // URLs are not revoked here: undo may bring the object back.
+      // Deleting a model or group deletes everything in it.
       removeObject: (id) => {
         get().checkpoint('Delete')
-        set((s) => ({
-          ...patchActive(s, (p) => ({ ...p, objects: p.objects.filter((o) => o.id !== id) })),
-          selectedId: s.selectedId === id ? null : s.selectedId,
-        }))
+        set((s) => {
+          const gone = new Set(subtreeIds(activeProject(s).objects, id))
+          return {
+            ...patchActive(s, (p) => ({ ...p, objects: p.objects.filter((o) => !gone.has(o.id)) })),
+            selectedId: s.selectedId && gone.has(s.selectedId) ? null : s.selectedId,
+          }
+        })
       },
       select: (id) => set({ selectedId: id }),
 
@@ -471,25 +582,35 @@ export const useWorkspace = create<WorkspaceState>()(
       // A geometry view can only be held by one image; the previous holder becomes Detail.
       setImageView: (id, view) =>
         set((s) =>
-          patchActive(s, (p) => ({
-            ...p,
-            images: p.images.map((i) => (i.id === id ? { ...i, view } : view !== 'detail' && i.view === view ? { ...i, view: 'detail' as ViewTag } : i)),
-          })),
+          patchActive(s, (p) => {
+            const images = p.images.map((i) => (i.id === id ? { ...i, view } : view !== 'detail' && i.view === view ? { ...i, view: 'detail' as ViewTag } : i))
+            return { ...p, images, segmentation: keepSegmentation(p.segmentation, images) }
+          }),
         ),
       removeImage: (id) =>
         set((s) =>
           patchActive(s, (p) => {
             const img = p.images.find((i) => i.id === id)
             if (img) URL.revokeObjectURL(img.url)
-            return { ...p, images: p.images.filter((i) => i.id !== id) }
+            const images = p.images.filter((i) => i.id !== id)
+            return { ...p, images, segmentation: keepSegmentation(p.segmentation, images) }
           }),
         ),
       clearImages: () =>
         set((s) =>
           patchActive(s, (p) => {
             p.images.forEach((i) => URL.revokeObjectURL(i.url))
-            return { ...p, images: [] }
+            return { ...p, images: [], segmentation: null }
           }),
+        ),
+
+      setPrompt: (patch) => set((s) => patchActive(s, (p) => ({ ...p, prompt: { ...p.prompt, ...patch } }))),
+      setSegmentation: (segmentation, projectId) => set((s) => patchProject(s, projectId ?? s.activeProjectId, (p) => ({ ...p, segmentation }))),
+      updateSegment: (id, patch) =>
+        set((s) =>
+          patchActive(s, (p) =>
+            p.segmentation ? { ...p, segmentation: { ...p.segmentation, edited: true, segments: p.segmentation.segments.map((g) => (g.id === id ? { ...g, ...patch } : g)) } } : p,
+          ),
         ),
 
       setShading: (shading) => set({ shading }),
@@ -497,7 +618,7 @@ export const useWorkspace = create<WorkspaceState>()(
       setPropertyTab: (propertyTab) => set({ propertyTab }),
       setJob: (job) => set({ job }),
       updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
-      forgetKeys: () => set((s) => ({ settings: { ...s.settings, hfToken: '', anthropicKey: '', rememberKeys: false } })),
+      forgetKeys: () => set((s) => ({ settings: { ...s.settings, hfToken: '', rememberKeys: false } })),
 
       setCamera: (camera) => set((s) => patchActive(s, (p) => ({ ...p, camera }))),
       setRealSize: (realSize) => set((s) => patchActive(s, (p) => ({ ...p, realSize }))),
@@ -537,17 +658,15 @@ export const useWorkspace = create<WorkspaceState>()(
     }),
     {
       name: 'workspace',
-      version: 4,
-      // v2: textured model replaces shape-only 2mv as default. v3: TRELLIS.2 replaces Hunyuan3D-2.1 as default.
+      version: 5,
       migrate: (persisted, version) => {
-        const p = persisted as { settings?: Partial<Settings>; shading?: ShadingMode }
-        if (version < 2 && p.settings) {
-          if (p.settings.spaceId === 'tencent/Hunyuan3D-2mv') p.settings.spaceId = 'tencent/Hunyuan3D-2.1'
-          if (p.settings.quality === 'standard') p.settings.quality = 'high'
-        }
-        if (version < 3 && p.settings?.spaceId === 'tencent/Hunyuan3D-2.1') p.settings.spaceId = 'microsoft/TRELLIS.2'
+        const p = persisted as { settings?: Partial<Settings> & Record<string, unknown>; shading?: ShadingMode }
         // v4: keys are memory-only by default. Anyone who already had a saved key keeps it saved.
         if (version < 4 && p.settings) p.settings.rememberKeys = !!(p.settings.hfToken || p.settings.anthropicKey)
+        // v5: SAM 3D replaces the earlier backends; their settings are dropped.
+        if (version < 5 && p.settings) {
+          for (const k of ['providerId', 'spaceId', 'workerUrl', 'photogrammetryUrl', 'anthropicKey', 'claudeModel', 'claudeSelfCheck', 'removeBackground']) delete p.settings[k]
+        }
         return p as never
       },
       merge: (persisted, current) => {
@@ -557,12 +676,17 @@ export const useWorkspace = create<WorkspaceState>()(
       // Preferences only; projects and meshes persist to IndexedDB (lib/persistence.ts).
       // API keys are written only if the user chose "Remember on this device".
       partialize: (s) => ({
-        settings: s.settings.rememberKeys ? s.settings : { ...s.settings, hfToken: '', anthropicKey: '' },
+        settings: s.settings.rememberKeys ? s.settings : { ...s.settings, hfToken: '' },
         shading: s.shading,
       }),
     },
   ),
 )
+
+/** Masks stay valid only while their photo is still the Front image. */
+function keepSegmentation(seg: Segmentation | null, images: InputImage[]) {
+  return seg && images.some((i) => i.id === seg.imageId && i.view === 'front') ? seg : null
+}
 
 export const activeProject = (s: Pick<WorkspaceState, 'projects' | 'activeProjectId'>) =>
   s.projects.find((p) => p.id === s.activeProjectId) ?? s.projects[0]

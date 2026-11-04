@@ -23,11 +23,20 @@ function getWorker() {
 }
 
 function pack(attr: BufferAttribute | InterleavedBufferAttribute): PackedAttr {
-  // Copy (de-interleaving if needed) so the original geometry stays untouched.
+  // Copy (de-interleaving if needed) so the original geometry stays untouched. Raw values, not
+  // getComponent(): that de-normalises (a vertex colour of 120/255 → 0.47), which a Uint8Array
+  // would then truncate to 0, turning every vertex colour black.
   const Ctor = attr.array.constructor as new (n: number) => PackedAttr['array']
-  const out = new Ctor(attr.count * attr.itemSize)
-  for (let i = 0; i < attr.count; i++) for (let c = 0; c < attr.itemSize; c++) out[i * attr.itemSize + c] = attr.getComponent(i, c)
-  return { array: out, itemSize: attr.itemSize, normalized: attr.normalized }
+  const n = attr.itemSize
+  const out = new Ctor(attr.count * n)
+  if ((attr as InterleavedBufferAttribute).isInterleavedBufferAttribute) {
+    const ia = attr as InterleavedBufferAttribute
+    const src = ia.data.array
+    for (let i = 0; i < ia.count; i++) for (let c = 0; c < n; c++) out[i * n + c] = src[i * ia.data.stride + ia.offset + c]
+  } else {
+    out.set((attr as BufferAttribute).array.subarray(0, attr.count * n))
+  }
+  return { array: out, itemSize: n, normalized: attr.normalized }
 }
 
 const AUTO_SMOOTH_ANGLE = MathUtils.degToRad(30)

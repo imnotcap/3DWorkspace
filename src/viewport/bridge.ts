@@ -1,5 +1,5 @@
 import type { Object3D } from 'three'
-import type { CameraPose, SceneObject } from '@/store/workspace'
+import type { CameraPose, SceneObject, Transform } from '@/store/workspace'
 
 export interface VideoResult {
   blob: Blob
@@ -17,6 +17,8 @@ export const viewport = {
   invalidate: () => {},
   exportGlb: async (_id: string): Promise<Blob | null> => null,
   exportScene: async (): Promise<Blob | null> => null,
+  /** The object's current placement expressed relative to `parentId` (null = the scene). */
+  relativeTransform: (_id: string, _parentId: string | null): Transform | null => null,
   /** Claude parts object → editable primitive objects (positions in world space). */
   separate: (_id: string): Omit<SceneObject, 'id'>[] | null => null,
   /** Pose of the current viewport view (what you see). */

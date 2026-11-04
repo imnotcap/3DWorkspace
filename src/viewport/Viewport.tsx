@@ -24,7 +24,8 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { PartsSpec } from '@/generation/parts/spec'
 import { activeProject, useActiveProject, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
-import { Model, withOriginalMaterials } from './Model'
+import { visibleBox } from './camera'
+import { Model, withOriginalMaterials, type Tree } from './Model'
 import { CameraView, RenderBridge } from './RenderSystem'
 
 const AXIS_X = '#e5484d'
@@ -105,7 +106,7 @@ function CameraRig() {
     const fit = (objects: Object3D[]) => {
       if (!controls) return
       const box = new Box3()
-      objects.forEach((o) => o.visible && box.expandByObject(o))
+      objects.forEach((o) => visibleBox(o, box))
       if (box.isEmpty()) box.set(new Vector3(-1, 0, -1), new Vector3(1, 2, 1))
       const sphere = box.getBoundingSphere(new Sphere())
       const fov = (camera.fov * Math.PI) / 180
@@ -124,11 +125,11 @@ function CameraRig() {
       useWorkspace.getState().setCameraView(false)
       const id = useWorkspace.getState().selectedId
       const o = id ? viewport.objects.get(id) : undefined
-      fit(o ? [o] : [...viewport.objects.values()])
+      fit(o ? [o] : roots())
     }
     viewport.frameAll = () => {
       useWorkspace.getState().setCameraView(false)
-      fit([...viewport.objects.values()])
+      fit(roots())
     }
   }, [camera, controls, invalidate])
 
@@ -194,9 +195,27 @@ function Bridge() {
       return out.length ? out : null
     }
 
-    /** Every visible object in one GLB, with the materials you assigned. */
+    viewport.relativeTransform = (id, parentId) => {
+      const o = viewport.objects.get(id)
+      const parent = parentId ? viewport.objects.get(parentId) : null
+      if (!o || (parentId && !parent)) return null
+      o.updateWorldMatrix(true, false)
+      const m = o.matrixWorld.clone()
+      if (parent) {
+        parent.updateWorldMatrix(true, false)
+        m.premultiply(parent.matrixWorld.clone().invert())
+      }
+      const pos = new Vector3()
+      const q = new Quaternion()
+      const sc = new Vector3()
+      m.decompose(pos, q, sc)
+      const e = new Euler().setFromQuaternion(q, 'XYZ')
+      return { position: pos.toArray() as Vec3, rotation: [e.x, e.y, e.z], scale: sc.toArray() as Vec3 }
+    }
+
+    /** Every visible object in one GLB, with the materials you assigned (models keep their part hierarchy). */
     viewport.exportScene = async () => {
-      const objs = [...viewport.objects.values()].filter((o) => o.visible)
+      const objs = roots().filter((o) => o.visible)
       if (!objs.length) return null
       const restores = objs.map(withOriginalMaterials)
       const helpers: Object3D[] = []
@@ -217,10 +236,24 @@ function Bridge() {
       const restore = withOriginalMaterials(target)
       const helpers: Object3D[] = []
       target.traverse((o) => o.name === '__selection' && o.visible && (helpers.push(o), (o.visible = false)))
+      // A part exports where it sits in the scene, not relative to its model: its world placement
+      // is written into its own transform for the export, then put back.
+      const saved = target.userData.parentId ? { p: target.position.clone(), q: target.quaternion.clone(), s: target.scale.clone() } : null
+      if (saved) {
+        target.updateWorldMatrix(true, false)
+        target.matrixWorld.decompose(target.position, target.quaternion, target.scale)
+        target.updateMatrix()
+      }
       try {
         const out = await new GLTFExporter().parseAsync(target, { binary: true, onlyVisible: true })
         return new Blob([out as ArrayBuffer], { type: 'model/gltf-binary' })
       } finally {
+        if (saved) {
+          target.position.copy(saved.p)
+          target.quaternion.copy(saved.q)
+          target.scale.copy(saved.s)
+          target.updateMatrixWorld(true)
+        }
         restore()
         helpers.forEach((o) => (o.visible = true))
         invalidate()
@@ -229,6 +262,9 @@ function Bridge() {
   }, [gl, scene, camera, invalidate])
   return null
 }
+
+/** Top-level objects; parts live inside their model's Object3D. */
+const roots = () => [...viewport.objects.values()].filter((o) => !o.userData.parentId)
 
 const TOOL_LABEL = { translate: 'Move', rotate: 'Rotate', scale: 'Scale' } as const
 
@@ -251,6 +287,15 @@ function SceneContent() {
   const showGrid = useWorkspace((s) => s.settings.showGrid)
   const invalidate = useThree((s) => s.invalidate)
   const [target, setTarget] = useState<Object3D | null>(null)
+  const tree = useMemo(() => {
+    const t: Tree = new Map()
+    const ids = new Set(project.objects.map((o) => o.id))
+    for (const o of project.objects) {
+      const key = o.parentId && ids.has(o.parentId) ? o.parentId : null
+      t.set(key, [...(t.get(key) ?? []), o])
+    }
+    return t
+  }, [project.objects])
   const rendered = shading === 'rendered'
   const light = LIGHTING[shading]
 
@@ -276,8 +321,8 @@ function SceneContent() {
         shadow-camera-bottom={-4}
       />
 
-      {project.objects.map((o) => (
-        <Model key={o.id} obj={o} selected={o.id === selectedId} shading={shading} />
+      {(tree.get(null) ?? []).map((o) => (
+        <Model key={o.id} obj={o} selectedId={selectedId} shading={shading} tree={tree} />
       ))}
 
       {rendered && <ContactShadows position={[0, 0.001, 0]} opacity={0.55} scale={12} blur={2.4} far={4} resolution={512} />}

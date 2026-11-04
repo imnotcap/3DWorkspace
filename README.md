@@ -1,44 +1,52 @@
 # 3D Workspace
 
-A browser-based 3D workspace that turns reference photos into meshes. It is laid out like a DCC app: project tabs, an outliner, a tool strip, shading modes and an orientation gizmo. It's a static site that deploys to GitHub Pages.
+A browser-based 3D workspace that turns a photo into a 3D model made of separate, editable parts, with Meta's SAM 3 and SAM 3D Objects. It is laid out like a DCC app: project tabs, an outliner, a tool strip, shading modes and an orientation gizmo. It's a static site that deploys to GitHub Pages.
 
 ## Stack
 
 Vite · React 19 · TypeScript · Tailwind v4 · Motion · React Three Fiber + drei (three.js) · Zustand · react-resizable-panels
 
-## Generation backends (all free)
+## Generation: Meta SAM 3D
 
-| Backend | Where it runs | Notes |
-| --- | --- | --- |
-| **Hugging Face Space** (default) | Public Gradio Spaces on HF GPUs | Free, but with a small **daily GPU allowance** per visitor that resets each day. A free Hugging Face account token raises it. Presets: **TRELLIS.2 (default, MIT, PBR, up to 1536³ / 4K textures)**, Hunyuan3D-2.1, Hunyuan3D-2mv (multi-view, shape only), Hunyuan3D-2, TripoSR. Any Space id works. |
-| **Parts · Claude** (exact) | Anthropic API, your own key | Claude reads every photo (detail shots too) and writes the product as exact primitive parts at real size with materials. A self-check renders the result from the photo's angle and has Claude correct it. Refine later in plain words ("legs are square 6 × 6 cm"). Best for hard-surface products. Roughly $0.20–0.80 per model on Opus 5.5. |
-| **Photogrammetry** (exact) | `worker/photogrammetry/` on any computer (CPU) | Measures a real object from 30–80 photos with COLMAP + OpenMVS, then stands it upright and removes the floor. See [its README](worker/photogrammetry/README.md). |
-| **Local GPU worker** | `worker/` on your own NVIDIA GPU | Best quality: multi-view geometry, then a texture painted from the Front photo. No queue. See [worker/README.md](worker/README.md). |
+Models are built by Meta's **SAM 3** and **SAM 3D Objects**, running on your own SAM 3D server ([worker/sam3d](worker/sam3d/README.md): Docker on an NVIDIA GPU with 32 GB+, locally, on a rented GPU or as a Hugging Face Space).
 
-### Accuracy: which backend to use
+1. **Front photo.** Add a photo of the object and tag it **Front** (the first photo is tagged Front automatically). Other photos stay as your reference; SAM 3D builds from one photo.
+2. **What is it, and its parts.** Name the object ("office chair") and, optionally, its parts ("seat, backrest, armrest, wheel"). With no part names, SAM 3 finds the parts by itself (or, with *Find parts* off in Generate settings, the whole object is one part).
+3. **Review parts** (optional). The part editor shows every part over the photo, with pixel-exact outlines. Click on the photo to add or correct a part (each click refines it; Shift/Alt-click excludes an area), merge parts, rename them, or leave some out. Parts never overlap and always cover the whole object, so nothing is built twice and nothing goes missing.
+4. **Generate with SAM 3D.** Each part is built with its texture and its pose in the photo. All parts share the photo's camera and depth, so they come back already fitted together. The model is then stood upright (by its largest part's own up axis, or by the photo's horizon), set on the floor, and scaled to *Real size* if you entered it. The photo's camera becomes the default render angle.
 
-- **Exact model of something you own:** use Photogrammetry, plus one real measurement under *Real size*.
-- **Model from product photos only:** use TRELLIS.2, plus the full spec-sheet size (W × H × D) under *Real size*. Overall proportions come out exact; part details are the model's best guess.
+If you change the object or part names before generating, the parts are found again, unless you edited them by hand (then your edits are kept).
 
-**Real size (cm)** in the Inputs panel scales every new mesh in the project to exactly that box. You can also edit any object later under **Size (cm)** in the Object panel (N), with proportions locked or free. The scene is metric: 1 unit = 1 m, the grid has 10 cm cells and 1 m sections.
+### Editing a model part by part
 
-### Input photos
+A SAM 3D model is a tree: **model → groups → parts**. Repeated parts (four legs) are grouped in a folder.
 
-Each photo has a role:
+- **Outliner:** open the model with its chevron to see its groups and parts. Click any row to select that piece, double-click to rename. Hiding a model or group hides everything in it.
+- **Part dropdown** (Object panel, N): pick the whole model, a group or any single part.
+- **Viewport:** the first click selects the whole model, each further click goes one level deeper (group, then part). Double-click goes straight to the part.
+- Each part keeps its own location, rotation, scale, size, material, shading and keyframes, relative to its model, so moving the model moves all of its parts. Duplicating or deleting a model or group includes everything in it.
+- **Take out of model** (Object panel, or the Object menu) makes a part a standalone object, exactly where it is.
+- **Export Selected** exports a part where it sits in the scene; **Export Scene** keeps the model's part hierarchy.
 
-- **Front**: a full view of the whole object (required). Textured models use only this one.
-- **Back / Left / Right**: full side views, used by multi-view models.
-- **Detail**: close-ups. Kept as reference and **never sent as a view**, because a multi-view model would treat a close-up as an entire side of the object.
+### Accuracy
 
-The first photo you add becomes Front and the rest become Detail, until you tag them otherwise.
+- SAM 3D estimates metric size from the photo's depth, so models come out roughly real size. For exact size, enter the spec-sheet dimensions under **Real size (cm)** before generating, or edit **Size (cm)** in the Object panel afterwards (whole model or any part).
+- **Quality** (Generate settings): Draft, Standard (Meta's default steps), High and Ultra (more sampling steps and a baked texture). From Standard up, each part's pose is refined against the photo's depth so the parts line up.
+- The same seed and photo give the same parts.
 
-The HF adapter reads each Space's API at runtime and maps inputs by parameter name, so it doesn't break when a Space reorders its arguments. To skip the public queue, duplicate a Space into your own HF account and paste its id.
+The scene is metric: 1 unit = 1 m, the grid has 10 cm cells and 1 m sections.
 
 ## Develop
 
 ```bash
 npm install
 npm run dev
+```
+
+Without a GPU, run the SAM 3D server in mock mode (stand-in models, same API) and leave **Server** at `http://localhost:7860`:
+
+```bash
+cd worker/sam3d && pip install -r requirements-dev.txt && MOCK=1 python app.py
 ```
 
 ## Deploy
@@ -59,7 +67,8 @@ Push to `main`. `.github/workflows/deploy.yml` builds and publishes to Pages. En
 | X / Delete | Delete |
 | F12 | Render PNG (2×, no helpers) |
 | ⌘/Ctrl + I, ⌘/Ctrl + E | Import GLB, export selected GLB |
-| Shift + D | Duplicate selected object |
+| Shift + D | Duplicate selected object (a model or group with all its parts) |
+| Click / double-click in the viewport | Select the model, then one level deeper per click / straight to the part |
 | ⌘/Ctrl + Z, ⇧⌘/Ctrl + Z | Undo, redo (add, delete, transforms, shading, materials) |
 | 0 / Ctrl + Alt + 0 | Camera view / align camera to view |
 | Space, ← →, Shift + ← → | Play/pause, step frame, jump to start/end |
@@ -72,7 +81,7 @@ Transform fields in the Object panel (N) are drag-to-scrub: drag to change, Shif
 ## Performance notes
 
 - The canvas renders **on demand** (`frameloop="demand"`), so it uses no GPU while idle.
-- The three.js and Gradio client chunks are lazy-loaded, so the shell paints first.
+- The three.js, Gradio client and part editor chunks are lazy-loaded, so the shell paints first.
 - Shading modes swap shared materials instead of cloning them. The environment is procedural (no HDRI download).
 - The gizmo moves the three.js object directly. The store is only updated on release (one undo step).
 - Raycasting uses `three-mesh-bvh`, built in idle time: picking a 1M-triangle mesh takes about 0.1 ms.
@@ -85,25 +94,24 @@ No generator or quota needed:
 - **Add → Box, Rounded box, Cylinder, Cone, Sphere, Capsule, Torus:** each is added at the origin, resting on the grid.
 - **Shape (Object panel, N):** every parameter in cm (width, height, depth, radius, corner radius…). Drag to scrub, or click to type. Objects resting on the floor stay on it as they change height.
 - **Transform:** G/R/S or the gizmo, or type Location, Rotation and Size. **Shift+D** duplicates.
-- **Separate into Parts:** turns a Claude-parts model into one editable primitive per part, each kept exactly in place, so you can fix any piece by hand.
 - **Export Scene (.glb):** every visible object, with its materials, in one file.
 
-Primitives get the same materials, keyframes, renders and undo as everything else.
+Primitives get the same materials, keyframes, renders and undo as everything else. To fix one piece of a SAM 3D model by hand, take it out of the model and model a replacement next to it.
 
 ## Materials
 
-The Object panel lists every surface of an object (for example the desk's laminate top, steel frame, plastic controller and keys). Each surface gets a material from the library and a colour:
+The Object panel lists every surface of an object. With a SAM 3D model, select a part to give it its own material (the steel frame, the wooden top). Each surface gets a material from the library and a colour:
 
 - **Library:** 26 presets in 7 categories (metals, powder coats and paints, plastics, wood, stone, glass, fabric), using physical properties: clearcoat, glass transmission, fabric sheen.
-- **Textures:** CC0 PBR maps (colour, normal, roughness, metalness, AO) from [ambientCG](https://ambientcg.com), downloaded at build time by `npm run textures` (see `scripts/ambientcg.config.json`; pin an asset with `"id"`). Without them, each preset falls back to a procedural texture. Claude-parts models get metric UVs, so a texture has the same real-world scale on every part.
+- **Textures:** CC0 PBR maps (colour, normal, roughness, metalness, AO) from [ambientCG](https://ambientcg.com), downloaded at build time by `npm run textures` (see `scripts/ambientcg.config.json`; pin an asset with `"id"`). Without them, each preset falls back to a procedural texture. Primitives get metric UVs, so a texture has the same real-world scale on every part.
 - **Colour:** a palette of 16 standard colours (RAL-style) plus a custom picker. On textured materials, a colour you pick tints the texture.
 
-## API keys
+## Tokens
 
-This site has **no API keys of its own**. Every visitor enters their own Hugging Face token or Anthropic key in Generate settings:
+This site has no keys of its own. A Hugging Face token is only needed if your SAM 3D server is a private Space:
 
-- Keys are kept **in memory only** by default and are gone when you close the tab. *Remember on this device* stores them in the browser's localStorage. *Forget my keys* removes them.
-- Keys are sent only to the service they belong to (huggingface.co or api.anthropic.com). They are never saved with projects or included in exports.
+- It is kept **in memory only** by default and is gone when you close the tab. *Remember on this device* stores it in the browser's localStorage. *Forget my keys* removes it.
+- It is sent only to Hugging Face, never saved with projects or included in exports.
 - The deploy workflow runs `npm run check:secrets`, which fails the build if anything resembling a key ends up in the published site.
 
 ## Rendering & animation
@@ -118,15 +126,14 @@ This site has **no API keys of its own**. Every visitor enters their own Hugging
 
 ## Mesh quality
 
-- **Shading:** *Auto* (default) smooths surfaces but keeps hard edges above 30°, like Blender's Auto Smooth. It's computed in a Web Worker.
-- **Materials:** override per object with presets (powder-coat black, aluminium, chrome, oak…) or custom colour, roughness and metallic. You can tint the generated texture instead.
-- **Quality presets:** Draft → Ultra (octree 512). Higher means finer geometry, and slower generation that uses more GPU quota.
+- **Shading:** *Auto* (default) smooths surfaces but keeps hard edges above 30°, like Blender's Auto Smooth. It's computed in a Web Worker and keeps per-vertex colours.
+- **Materials:** override per part with presets (powder-coat black, aluminium, chrome, oak…) or custom colour, roughness and metallic. You can tint the generated texture instead.
 
-Generated meshes are as good as the open models behind them. Expect a convincing shape and texture from one good photo, not CAD-exact parts. Small features (buttons, engraved text) come from the texture, not the geometry.
+Generated meshes are as good as SAM 3D Objects makes them: a convincing shape and texture for each part, with occluded sides completed by the model. Small features (buttons, engraved text) come from the texture, not the geometry.
 
 ## Persistence
 
-Projects, meshes, transforms and input photos are saved to IndexedDB, so a reload restores your work. Settings (including the HF token) are kept in `localStorage`. Nothing leaves the browser except the images you send to the backend you picked.
+Projects, meshes, the part tree, transforms, input photos and part masks are saved to IndexedDB, so a reload restores your work. Settings are kept in `localStorage`. Nothing leaves the browser except the Front photo and part masks you send to your SAM 3D server.
 
 ## Credits
 

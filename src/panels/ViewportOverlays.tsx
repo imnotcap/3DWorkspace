@@ -5,7 +5,7 @@ import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'rea
 import { cancelGeneration } from '@/generation/run'
 import { actions } from '@/lib/actions'
 import { cn } from '@/lib/cn'
-import { useActiveProject, useWorkspace, type PropertyTab, type ShadingMode } from '@/store/workspace'
+import { ancestorIds, useActiveProject, useWorkspace, type PropertyTab, type ShadingMode } from '@/store/workspace'
 import { viewport } from '@/viewport/bridge'
 import { frameRect } from '@/lib/frame'
 import { Button, IconButton, Menu, Tooltip, ease } from '@/ui/primitives'
@@ -52,7 +52,11 @@ export function ViewportHeader() {
         items={
           project.objects.length
             ? [
-                ...project.objects.map((o) => ({ label: o.name, checked: o.id === selectedId, onSelect: () => select(o.id) })),
+                ...project.objects.map((o) => ({
+                  label: `${'\u2003'.repeat(ancestorIds(project.objects, o.id).length)}${o.name}`,
+                  checked: o.id === selectedId,
+                  onSelect: () => select(o.id),
+                })),
                 { separator: true, label: '' },
                 { label: 'None', shortcut: 'Esc', onSelect: () => select(null) },
               ]
@@ -74,6 +78,7 @@ export function ViewportHeader() {
           { label: 'Properties', shortcut: 'N', onSelect: () => setPropertyTab('object'), disabled: !selectedId },
           { label: 'Duplicate', shortcut: '⇧D', onSelect: actions.duplicateSelected, disabled: !selectedId },
           { label: 'Separate into Parts', onSelect: actions.separateSelected, disabled: !selected?.spec },
+          { label: 'Take Part out of Model', onSelect: actions.unparentSelected, disabled: !selected?.parentId },
           { separator: true, label: '' },
           { label: 'Export Selected (.glb)', shortcut: '⌘E', onSelect: actions.exportSelected, disabled: !selectedId },
           { label: 'Export Scene (.glb)', onSelect: actions.exportScene, disabled: !project.objects.length },
@@ -190,7 +195,10 @@ export function StatsOverlay() {
   const show = useWorkspace((s) => s.settings.showStats)
   const project = useActiveProject()
   if (!show) return null
-  const visible = project.objects.filter((o) => o.visible && !o.error)
+  const byId = new Map(project.objects.map((o) => [o.id, o]))
+  // A part counts if it and every model/folder above it are visible; models themselves have no geometry.
+  const shown = (o: (typeof project.objects)[number]) => o.visible && ancestorIds(project.objects, o.id).every((a) => byId.get(a)?.visible)
+  const visible = project.objects.filter((o) => !o.isGroup && !o.error && shown(o))
   const v = visible.reduce((a, o) => a + (o.stats?.vertices ?? 0), 0)
   const t = visible.reduce((a, o) => a + (o.stats?.triangles ?? 0), 0)
   const rows: [string, number][] = [
@@ -268,7 +276,7 @@ export function JobCard() {
               <span className="mt-1 size-1.5 shrink-0 rounded-full bg-danger" />
               <div className="min-w-0 flex-1">
                 <p className="text-xs text-fg">{job.message}</p>
-                {job.hint && <p className="mt-1 text-2xs leading-snug text-dim">{job.hint}</p>}
+                {job.hint && <p className="mt-1 max-h-40 overflow-y-auto whitespace-pre-line text-2xs leading-snug text-dim">{job.hint}</p>}
               </div>
               <IconButton size="sm" aria-label="Dismiss" onClick={() => setJob({ status: 'idle' })}>
                 <X className="size-3" />

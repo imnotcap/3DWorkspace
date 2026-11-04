@@ -1,33 +1,21 @@
 import {
-  AgXToneMapping,
-  Box3,
   BoxGeometry,
   CapsuleGeometry,
   CylinderGeometry,
-  DirectionalLight,
   ExtrudeGeometry,
   Group,
-  HemisphereLight,
   LatheGeometry,
-  MathUtils,
   Mesh,
   MeshStandardMaterial,
-  PerspectiveCamera,
-  PMREMGenerator,
-  Scene,
   Shape,
   SphereGeometry,
   TorusGeometry,
   Vector2,
-  WebGLRenderer,
   BufferAttribute,
   type BufferGeometry,
 } from 'three'
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
-import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
-import { applyPose, framePose } from '@/viewport/camera'
-import type { PartSpec, PartsSpec } from './spec'
+import type { PartSpec } from './spec'
 
 const ok = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n)
 const pos = (n: unknown) => ok(n) && n > 0
@@ -85,83 +73,6 @@ export function metricUVs(g: BufferGeometry) {
     uv[i * 2 + 1] = v
   }
   g.setAttribute('uv', new BufferAttribute(uv, 2))
-}
-
-/** Spec → three.js group. Invalid parts are skipped and reported, never fatal. */
-export function buildGroup(spec: PartsSpec): { group: Group; warnings: string[] } {
-  const materials = new Map(
-    spec.materials.map((m) => [
-      m.id,
-      new MeshStandardMaterial({
-        name: m.name,
-        color: /^#[0-9a-f]{6}$/i.test(m.color) ? m.color : '#9a9a9a',
-        roughness: MathUtils.clamp(ok(m.roughness) ? m.roughness : 0.5, 0, 1),
-        metalness: MathUtils.clamp(ok(m.metalness) ? m.metalness : 0, 0, 1),
-      }),
-    ]),
-  )
-  const fallback = new MeshStandardMaterial({ name: 'Unassigned', color: '#9a9a9a', roughness: 0.5 })
-  const group = new Group()
-  group.name = spec.name
-  const warnings: string[] = []
-  for (const p of spec.parts) {
-    const g = geometryFor(p)
-    if (typeof g === 'string') {
-      warnings.push(`${p.name}: ${g}`)
-      continue
-    }
-    metricUVs(g)
-    const mesh = new Mesh(g, materials.get(p.material) ?? fallback)
-    mesh.name = p.name
-    mesh.userData.partIndex = spec.parts.indexOf(p)
-    const [x = 0, y = 0, z = 0] = p.position
-    const [rx = 0, ry = 0, rz = 0] = p.rotation_deg
-    mesh.position.set(x, y, z)
-    mesh.rotation.set(MathUtils.degToRad(rx), MathUtils.degToRad(ry), MathUtils.degToRad(rz))
-    group.add(mesh)
-  }
-  if (!group.children.length) throw new Error('Claude returned no buildable parts.')
-  return { group, warnings }
-}
-
-export async function toGlb(group: Group): Promise<Blob> {
-  const out = await new GLTFExporter().parseAsync(group, { binary: true })
-  return new Blob([out as ArrayBuffer], { type: 'model/gltf-binary' })
-}
-
-/** Render the spec from its estimated photo angle, for Claude's self-check. */
-export async function renderPreview(group: Group, spec: PartsSpec, width: number, height: number): Promise<Blob> {
-  const canvas = document.createElement('canvas')
-  const renderer = new WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true })
-  try {
-    renderer.setSize(width, height, false)
-    renderer.toneMapping = AgXToneMapping
-    const scene = new Scene()
-    scene.background = null
-    renderer.setClearColor(0xffffff, 1) // product-photo white, like most reference shots
-    const pmrem = new PMREMGenerator(renderer)
-    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
-    scene.add(new HemisphereLight('#ffffff', '#888888', 0.6))
-    const sun = new DirectionalLight('#ffffff', 1.2)
-    sun.position.set(2, 4, 3)
-    scene.add(sun)
-    scene.add(group)
-    const box = new Box3().setFromObject(group)
-    const az = MathUtils.degToRad(spec.photo_view?.azimuth_deg ?? 20)
-    const el = MathUtils.degToRad(spec.photo_view?.elevation_deg ?? 15)
-    const pose = framePose(box, { azimuth: az, polar: Math.PI / 2 - el, focal: 50 }, width / height)
-    const cam = new PerspectiveCamera()
-    applyPose(cam, pose, width / height)
-    renderer.render(scene, cam)
-    const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png'))
-    scene.remove(group)
-    pmrem.dispose()
-    if (!blob) throw new Error('Preview render failed.')
-    return blob
-  } finally {
-    renderer.dispose()
-    renderer.forceContextLoss()
-  }
 }
 
 /** A user-made primitive object: one mesh, origin at the shape's centre (like Blender). */

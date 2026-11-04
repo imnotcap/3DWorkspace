@@ -1,12 +1,13 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { ImagePlus, Trash2, X } from 'lucide-react'
-import { useState } from 'react'
-import { findPreset } from '@/generation/spaces'
+import { ImagePlus, Shapes, Trash2, X } from 'lucide-react'
+import { lazy, Suspense, useState } from 'react'
 import type { ViewTag } from '@/generation/types'
 import { actions } from '@/lib/actions'
 import { cn } from '@/lib/cn'
 import { useActiveProject, useWorkspace } from '@/store/workspace'
-import { Button, IconButton, SectionTitle, ease } from '@/ui/primitives'
+import { Button, IconButton, SectionTitle, ease, inputCls } from '@/ui/primitives'
+
+const PartEditor = lazy(() => import('./PartEditor').then((m) => ({ default: m.PartEditor })))
 
 const VIEWS: { id: ViewTag; label: string }[] = [
   { id: 'front', label: 'Front' },
@@ -19,22 +20,15 @@ const VIEWS: { id: ViewTag; label: string }[] = [
 export function InputsPanel() {
   const project = useActiveProject()
   const job = useWorkspace((s) => s.job)
-  const settings = useWorkspace((s) => s.settings)
-  const { setImageView, removeImage, clearImages, setPropertyTab } = useWorkspace.getState()
+  const { setImageView, removeImage, clearImages, setPropertyTab, setPrompt } = useWorkspace.getState()
   const [over, setOver] = useState(false)
+  const [editing, setEditing] = useState(false)
   const running = job.status === 'running'
-  const preset = settings.providerId === 'hf-space' ? findPreset(settings.spaceId) : undefined
-  const scan = settings.providerId === 'photogrammetry'
-  // Claude reads every photo: full views for proportions, detail shots for small parts.
-  const claude = settings.providerId === 'claude-parts'
-  const multiView = settings.providerId === 'local-worker' || !preset || preset.multiView
   const hasFront = project.images.some((i) => i.view === 'front')
-  const hasDetail = project.images.some((i) => i.view === 'detail')
-  const unusedSides = !multiView && project.images.some((i) => i.view !== 'front' && i.view !== 'detail')
-
-  // Which images will actually be sent: Front always; sides only for multi-view models.
-  const used = (v: ViewTag) => scan || claude || v === 'front' || (multiView && v !== 'detail')
-  const canGenerate = scan ? project.images.length >= 3 : hasFront
+  const others = project.images.some((i) => i.view !== 'front')
+  const seg = project.segmentation
+  // SAM 3D builds from the Front photo; the others stay as your reference.
+  const used = (v: ViewTag) => v === 'front'
 
   return (
     <div
@@ -86,8 +80,7 @@ export function InputsPanel() {
                 >
                   <X className="size-3" />
                 </button>
-                {!scan && (
-                  <select
+                <select
                   value={img.view}
                   onChange={(e) => setImageView(img.id, e.target.value as ViewTag)}
                   aria-label="Image role"
@@ -101,8 +94,7 @@ export function InputsPanel() {
                       {v.label}
                     </option>
                   ))}
-                  </select>
-                )}
+                </select>
               </motion.div>
             ))}
           </AnimatePresence>
@@ -118,30 +110,63 @@ export function InputsPanel() {
           </button>
         </div>
 
+        <div className="mt-2.5 space-y-1.5">
+          <label className="block">
+            <span className="mb-1 block text-2xs font-medium uppercase tracking-[0.08em] text-faint">What is it?</span>
+            <input className={inputCls} placeholder="e.g. office chair" value={project.prompt.object} onChange={(e) => setPrompt({ object: e.target.value })} />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-2xs font-medium uppercase tracking-[0.08em] text-faint">Parts</span>
+            <input className={inputCls} placeholder="seat, backrest, armrest, wheel · or leave empty" value={project.prompt.parts} onChange={(e) => setPrompt({ parts: e.target.value })} />
+          </label>
+          <button
+            type="button"
+            disabled={!hasFront}
+            onClick={() => setEditing(true)}
+            className="flex h-7 w-full items-center gap-2 rounded-md border border-line-strong bg-app/60 px-2 text-left text-xs text-fg transition-colors hover:border-dim disabled:opacity-40"
+          >
+            <Shapes className="size-3.5 text-dim" />
+            {seg ? (
+              <>
+                <span className="flex-1 truncate">
+                  {seg.segments.filter((s) => s.enabled).length} of {seg.segments.length} parts
+                </span>
+                <span className="flex -space-x-0.5">
+                  {seg.segments.slice(0, 8).map((s) => (
+                    <span key={s.id} className="size-2 rounded-full ring-1 ring-panel" style={{ background: s.color, opacity: s.enabled ? 1 : 0.3 }} />
+                  ))}
+                </span>
+                <span className="text-2xs text-dim">Edit</span>
+              </>
+            ) : (
+              <>
+                <span className="flex-1">Review parts</span>
+                <span className="text-2xs text-faint">optional</span>
+              </>
+            )}
+          </button>
+        </div>
+
         <RealSizeRow />
 
         <div className="mt-2 space-y-1.5 text-2xs leading-snug text-faint">
-          {scan ? (
-            <p className={project.images.length < 30 ? 'text-warn' : undefined}>
-              Photogrammetry uses every photo{project.images.length < 30 ? ` (${project.images.length} so far, 30–80 recommended)` : ''}. Walk all the way round, overlap each shot by about two thirds, add a higher ring, and keep the object filling most of the frame. Matte light, no motion blur.
-            </p>
-          ) : (
-            <>
-              {project.images.length > 0 && !hasFront && <p className="text-warn">Tag one image as Front: a full view of the whole object.</p>}
-              {hasDetail && !claude && <p>Detail shots stay as reference and aren't used for geometry. Tag an image Back/Left/Right only if it shows the whole object from that side.</p>}
-              {claude && <p>Claude uses every photo: Front and side views for proportions, Detail shots for small parts. Add the Real size for an exact result.</p>}
-              {unusedSides && !claude && <p>{preset?.label} uses the Front image only. Choose Hunyuan3D-2mv to use side views too.</p>}
-            </>
-          )}
+          {project.images.length > 0 && !hasFront && <p className="text-warn">Tag one photo as Front: a full view of the whole object. SAM 3D builds from it.</p>}
+          {hasFront && !seg && <p>Generate finds the parts with SAM 3 and builds each one with SAM 3D. Review them first to fix any part by clicking.</p>}
+          {others && <p>Only the Front photo is used for 3D. The others stay here as your reference.</p>}
         </div>
       </div>
+      {editing && (
+        <Suspense fallback={null}>
+          <PartEditor onClose={() => setEditing(false)} />
+        </Suspense>
+      )}
 
       <div className="flex gap-1.5 border-t border-line p-2">
         <Button variant="ghost" className="px-2" onClick={() => setPropertyTab('generate')}>
           Settings
         </Button>
-        <Button variant="primary" className="flex-1" disabled={running || !canGenerate} onClick={actions.generate}>
-          {running ? (scan ? 'Reconstructing…' : 'Generating…') : scan ? 'Reconstruct' : 'Generate Mesh'}
+        <Button variant="primary" className="flex-1" disabled={running || !hasFront} onClick={actions.generate}>
+          {running ? 'Generating…' : 'Generate with SAM 3D'}
         </Button>
       </div>
     </div>
