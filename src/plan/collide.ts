@@ -13,7 +13,7 @@ export interface Body {
 }
 
 /** How close a piece may come to a wall face: touching, never inside it (no z-fighting). */
-export const WALL_GAP = 0.003
+export const WALL_GAP = 0.004
 
 /** Footprint corners (same convention as plan/footprint.ts). */
 export function corners(b: Body): Vec2[] {

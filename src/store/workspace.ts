@@ -461,7 +461,8 @@ export const useWorkspace = create<WorkspaceState>()(
         }),
       setActiveProject: (id) => set({ activeProjectId: id, selectedId: null, planSel: null }),
       renameProject: (id, name) => set((s) => ({ projects: s.projects.map((p) => (p.id === id ? { ...p, name } : p)) })),
-      replaceProjects: (projects, activeProjectId) => set({ projects, activeProjectId, selectedId: null, past: [], future: [] }),
+      // Saved projects are brought in line too: anything that was inside a wall comes out of it.
+      replaceProjects: (projects, activeProjectId) => set({ projects: projects.map((p) => ({ ...p, objects: p.objects.map((o) => clear(p, o)) })), activeProjectId, selectedId: null, past: [], future: [] }),
 
       checkpoint: (label) =>
         set((s) => {
@@ -721,7 +722,7 @@ export const useWorkspace = create<WorkspaceState>()(
             tour: t.tour,
             useTour: t.tour.points.length > 1,
             camera: null,
-            objects: t.objects.map((o) => ({ ...o, id: uid() })),
+            objects: t.objects.map((o) => clear(t, { ...o, id: uid() })),
           })),
           selectedId: null,
           planSel: null,
