@@ -6,7 +6,9 @@ import { activeProject, useWorkspace, type CameraPose } from '@/store/workspace'
 import { objectTransformAt } from '@/lib/anim'
 import { viewport } from './bridge'
 import { applyPose, evaluate, focalToFov, framePose, frameRect, orbitRadius, poseFromCamera, sceneBox } from './camera'
+import { tourFrames, tourPath, tourPose } from '@/plan/tour'
 
+const SKY = new Color('#dfe6ec')
 const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()))
 const yieldToUi = () => new Promise<void>((r) => setTimeout(r, 0))
 
@@ -56,10 +58,29 @@ function autoPose(): CameraPose {
   return pose
 }
 
-/** Render camera at `frame`: keyframes → static camera → automatic product framing. */
+/** The walkthrough drives the camera when it is on and has a path. */
+export const tourActive = (p: { useTour: boolean; tour: { points: unknown[] } }) => p.useTour && p.tour.points.length > 1
+
+let pathCache: { key: unknown; levels: unknown; path: ReturnType<typeof tourPath> } | null = null
+/** Render camera at `frame`: tour → keyframes → static camera → automatic product framing. */
 function poseAt(frame: number): CameraPose {
   const p = activeProject(useWorkspace.getState())
+  if (tourActive(p)) {
+    if (pathCache?.key !== p.tour || pathCache.levels !== p.levels) pathCache = { key: p.tour, levels: p.levels, path: tourPath(p) }
+    return tourPose(p, frame - p.animation.start, p.animation.fps, pathCache.path)
+  }
   return evaluate(p.animation, frame, p.camera ?? autoPose())
+}
+
+export interface ShotOptions {
+  width: number
+  height: number
+  transparent?: boolean
+  /** Show ceilings (interiors) or not (dollhouse views). */
+  ceilings: boolean
+  /** Highest level index shown (null = all). */
+  maxLevel: number | null
+  background?: string
 }
 
 /**
@@ -71,10 +92,10 @@ export function RenderBridge() {
   const { gl, scene, invalidate } = useThree()
 
   useEffect(() => {
-    async function session<T>(opts: { transparent: boolean }, fn: (draw: (pose: CameraPose, frame: number) => void, w: number, h: number) => Promise<T>) {
+    async function session<T>(opts: ShotOptions, fn: (draw: (pose: CameraPose, frame: number) => void, w: number, h: number) => Promise<T>) {
       const s = useWorkspace.getState()
-      const w = s.settings.renderWidth
-      const h = s.settings.renderHeight
+      const w = opts.width
+      const h = opts.height
       const ctx = gl.getContext()
       const max = ctx.getParameter(ctx.MAX_VIEWPORT_DIMS) as Int32Array
       const maxRb = ctx.getParameter(ctx.MAX_RENDERBUFFER_SIZE) as number
@@ -88,10 +109,18 @@ export function RenderBridge() {
       }
 
       const hidden: Object3D[] = []
+      const toggled: [Object3D, boolean][] = []
       scene.traverse((o) => {
         if (o.visible && (o.name.startsWith('__') || o.userData.renderable === false)) {
           o.visible = false
           hidden.push(o)
+          return
+        }
+        // Ceilings and floors for this shot, whatever the viewport shows.
+        const want = o.userData.ceiling ? opts.ceilings : typeof o.userData.levelIndex === 'number' ? opts.maxLevel === null || o.userData.levelIndex <= opts.maxLevel : null
+        if (want !== null && o.visible !== want) {
+          toggled.push([o, o.visible])
+          o.visible = want
         }
       })
       const prevRatio = gl.getPixelRatio()
@@ -102,7 +131,8 @@ export function RenderBridge() {
       if (opts.transparent) {
         scene.background = null
         gl.setClearColor(0x000000, 0)
-      }
+      } else if (opts.background) scene.background = new Color(opts.background)
+      else if (opts.ceilings) scene.background = SKY // daylight through the windows of interior shots
       gl.setPixelRatio(1)
       gl.setSize(w, h, false)
       const cam = new PerspectiveCamera()
@@ -120,6 +150,7 @@ export function RenderBridge() {
         scene.background = prevBg
         gl.setClearColor(prevClear, prevAlpha)
         hidden.forEach((o) => (o.visible = true))
+        toggled.forEach(([o, v]) => (o.visible = v))
         if (prevShading !== 'rendered') useWorkspace.getState().setShading(prevShading)
         invalidate()
       }
@@ -128,8 +159,28 @@ export function RenderBridge() {
     viewport.renderPose = (frame) => poseAt(frame ?? useWorkspace.getState().frame)
     viewport.orbitRadius = (pose) => orbitRadius(sceneBox([...viewport.objects.values()]), pose, renderAspect())
 
+    const current = (): ShotOptions => {
+      const st = useWorkspace.getState()
+      const p = activeProject(st)
+      const walk = tourActive(p)
+      const idx = p.levels.findIndex((l) => l.id === p.activeLevelId)
+      return {
+        width: st.settings.renderWidth,
+        height: st.settings.renderHeight,
+        transparent: st.settings.transparent,
+        ceilings: walk || st.settings.showCeilings,
+        maxLevel: walk || st.settings.showUpperLevels ? null : idx,
+      }
+    }
+
+    viewport.renderShot = (pose, opts) =>
+      session(opts, async (draw) => {
+        draw(pose, useWorkspace.getState().frame)
+        return new Promise<Blob | null>((res) => gl.domElement.toBlob(res, opts.transparent ? 'image/png' : 'image/jpeg', 0.92))
+      })
+
     viewport.renderStill = () =>
-      session({ transparent: useWorkspace.getState().settings.transparent }, async (draw) => {
+      session(current(), async (draw) => {
         const f = useWorkspace.getState().frame
         draw(poseAt(f), f)
         // toBlob snapshots the drawing buffer synchronously, before it's cleared.
@@ -137,10 +188,11 @@ export function RenderBridge() {
       })
 
     viewport.renderVideo = (onFrame, signal) =>
-      session({ transparent: false }, async (draw, w, h) => {
+      session({ ...current(), transparent: false }, async (draw, w, h) => {
         const mb = await import('mediabunny')
-        const anim = activeProject(useWorkspace.getState()).animation
-        const total = anim.end - anim.start + 1
+        const proj = activeProject(useWorkspace.getState())
+        const anim = proj.animation
+        const total = tourActive(proj) ? tourFrames(proj, anim.fps) : anim.end - anim.start + 1
         const codec = await mb.getFirstEncodableVideoCodec(['avc', 'vp9', 'av1', 'vp8'], { width: w, height: h })
         if (!codec) throw new Error('This browser cannot encode video. Use Chrome, Edge or Firefox 130+.')
         const webm = codec === 'vp8'

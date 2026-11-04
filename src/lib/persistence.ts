@@ -1,5 +1,5 @@
 import type { ViewTag } from '@/generation/types'
-import { DEFAULT_ANIMATION, DEFAULT_PROMPT, useWorkspace, type Animation, type CameraPose, type Primitive, type Interpolation, type ObjectKey, type PartPrompt, type RealSize, type MaterialOverride, type Project, type SceneObject, type Segmentation, type ShadeMode, type Transform } from '@/store/workspace'
+import { DEFAULT_ANIMATION, DEFAULT_PROMPT, DEFAULT_TOUR, modelUrl, newLevel, useWorkspace, type FurnitureSpec, type PlanData, type Animation, type CameraPose, type Primitive, type Interpolation, type ObjectKey, type PartPrompt, type RealSize, type MaterialOverride, type Project, type SceneObject, type Segmentation, type ShadeMode, type Transform } from '@/store/workspace'
 
 /**
  * Projects, meshes and input photos survive reloads via IndexedDB.
@@ -13,6 +13,9 @@ const VERSION = 1
 interface StoredObject {
   id: string
   name: string
+  levelId?: string
+  furniture?: FurnitureSpec
+  modelFile?: string
   parentId?: string | null
   isGroup?: boolean
   keepOrigin?: boolean
@@ -52,6 +55,9 @@ interface StoredState {
     animation?: Animation
     prompt?: PartPrompt
     segmentation?: StoredSegmentation | null
+    plan?: PlanData
+    activeLevelId?: string
+    useTour?: boolean
   }[]
 }
 
@@ -96,6 +102,9 @@ async function save() {
       autoAngles: p.autoAngles,
       animation: p.animation,
       prompt: p.prompt,
+      plan: { levels: p.levels, walls: p.walls, openings: p.openings, rooms: p.rooms, tour: p.tour },
+      activeLevelId: p.activeLevelId,
+      useTour: p.useTour,
       segmentation: p.segmentation && {
         ...p.segmentation,
         segments: p.segmentation.segments.map(({ mask, ...g }) => {
@@ -109,6 +118,9 @@ async function save() {
           primitive: o.primitive,
           id: o.id,
           name: o.name,
+          levelId: o.levelId,
+          furniture: o.furniture,
+          modelFile: o.modelFile,
           parentId: o.parentId ?? null,
           isGroup: o.isGroup,
           keepOrigin: o.keepOrigin,
@@ -160,7 +172,8 @@ async function load(): Promise<boolean> {
         await Promise.all(
           p.objects.map(async (o): Promise<SceneObject | null> => {
             if (o.isGroup) return { ...o, shade: o.shade ?? 'original', material: o.material ?? null }
-            if (o.primitive) return { ...o, stats: undefined, shade: o.shade ?? 'original', material: o.material ?? null }
+            if (o.primitive || o.furniture) return { ...o, stats: undefined, shade: o.shade ?? 'original', material: o.material ?? null }
+            if (o.modelFile) return { ...o, stats: undefined, shade: o.shade ?? 'original', material: o.material ?? null, url: modelUrl(o.modelFile) }
             const blob = await get(o.id)
             if (!blob) return null
             written.add(o.id)
@@ -209,9 +222,18 @@ async function load(): Promise<boolean> {
             segments: segments as Segmentation['segments'],
           }
       }
+      // Projects saved before levels existed get one floor.
+      const levels = p.plan?.levels?.length ? p.plan.levels : [newLevel('Ground floor')]
       return {
         id: p.id,
         name: p.name,
+        levels,
+        activeLevelId: levels.some((l) => l.id === p.activeLevelId) ? p.activeLevelId! : levels[0].id,
+        walls: p.plan?.walls ?? [],
+        openings: p.plan?.openings ?? [],
+        rooms: p.plan?.rooms ?? [],
+        tour: { ...DEFAULT_TOUR, ...p.plan?.tour },
+        useTour: !!p.useTour,
         objects,
         images,
         camera: p.camera ?? null,

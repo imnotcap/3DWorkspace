@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { GenerateProgress, Quality, ViewTag } from '@/generation/types'
+import type { Level, Opening, OpeningKind, RoomInfo, Tour, Wall } from '@/plan/types'
 
 export type ShadingMode = 'wireframe' | 'solid' | 'material' | 'rendered'
 export type Tool = 'select' | 'translate' | 'rotate' | 'scale'
@@ -83,9 +84,22 @@ export interface Primitive {
   material: { name: string; color: string; roughness: number; metalness: number }
 }
 
+/** A catalog piece built from parameters (sofa, kitchen cabinet, stairs…). Size in metres: width, height, depth. */
+export interface FurnitureSpec {
+  item: string
+  size: Vec3
+  options?: Record<string, string | number>
+}
+
 export interface SceneObject {
   id: string
   name: string
+  /** The floor it stands on; its transform is relative to that floor. Missing = the first level. */
+  levelId?: string
+  /** Set for catalog furniture built from parameters. */
+  furniture?: FurnitureSpec
+  /** Catalog model file in public/models/ (photoreal pieces); replaces `blob`. */
+  modelFile?: string
   /** The model or group this object belongs to; its transform is relative to that parent. */
   parentId?: string | null
   /** A container (a whole SAM 3D model, or a folder of parts like "Legs"): no geometry of its own. */
@@ -178,7 +192,24 @@ export interface Project {
   animation: Animation
   prompt: PartPrompt
   segmentation: Segmentation | null
+  // The house
+  levels: Level[]
+  activeLevelId: string
+  walls: Wall[]
+  openings: Opening[]
+  rooms: RoomInfo[]
+  tour: Tour
+  /** The render camera follows the tour (walkthrough video) instead of camera keyframes. */
+  useTour: boolean
 }
+
+/** Everything in the house plan, as one undoable unit. */
+export type PlanData = Pick<Project, 'levels' | 'walls' | 'openings' | 'rooms' | 'tour'>
+
+export type View = 'plan' | '3d' | 'split'
+export type PlanTool = 'select' | 'wall' | 'room' | 'door' | 'window' | 'tour'
+/** A selected plan element. Rooms are picked by a point inside them (`at`), walls optionally by side. */
+export type PlanSelection = { kind: 'wall' | 'opening' | 'room' | 'tour' | 'level'; id: string; side?: 'left' | 'right'; at?: [number, number] } | null
 
 export type RenderJob = { kind: 'image' | 'video'; done: number; total: number; message: string } | null
 
@@ -211,6 +242,14 @@ export interface Settings {
   showTimeline: boolean
   /** Keep API keys in this browser's storage. Off = keys live in memory until the tab closes. */
   rememberKeys: boolean
+  /** Ceilings in the 3D view (renders and the tour always have them). */
+  showCeilings: boolean
+  /** Show the floors above the active one in 3D. */
+  showUpperLevels: boolean
+  /** Plan snapping grid, m. */
+  grid: number
+  /** Thickness of new walls, m. */
+  wallThickness: number
 }
 
 /** Undo entry: the active project's object list before a change. */
@@ -218,6 +257,7 @@ interface Snapshot {
   projectId: string
   label: string
   objects: SceneObject[]
+  plan: PlanData
 }
 
 interface WorkspaceState {
@@ -235,6 +275,12 @@ interface WorkspaceState {
   playing: boolean
   cameraView: boolean
   renderJob: RenderJob
+  view: View
+  planTool: PlanTool
+  planSel: PlanSelection
+  /** Catalog item being placed (follows the pointer until you click). */
+  placing: string | null
+  openingKind: OpeningKind
 
   // projects
   addProject: () => void
@@ -243,7 +289,7 @@ interface WorkspaceState {
   renameProject: (id: string, name: string) => void
   replaceProjects: (projects: Project[], activeId: string) => void
   // objects
-  addObject: (obj: { name: string; blob?: Blob; primitive?: Primitive; source: string; fitSize?: RealSize | null; exact?: boolean; spec?: unknown; transform?: Transform; material?: MaterialOverride | null }, projectId?: string) => string
+  addObject: (obj: { name: string; blob?: Blob; modelFile?: string; primitive?: Primitive; furniture?: FurnitureSpec; surfaces?: Record<string, MaterialOverride>; levelId?: string; source: string; fitSize?: RealSize | null; exact?: boolean; spec?: unknown; transform?: Transform; material?: MaterialOverride | null }, projectId?: string) => string
   /** One undo step: a whole hierarchy (model → groups → parts). `parent` indexes into `nodes`; returns the new ids. */
   addTree: (nodes: TreeNode[], projectId?: string) => string[]
   /** Move an object into another parent (or to the top level with null), keeping it where it is on screen. */
@@ -290,6 +336,18 @@ interface WorkspaceState {
   setPlaying: (p: boolean) => void
   setCameraView: (v: boolean) => void
   setRenderJob: (j: RenderJob) => void
+  // house plan (active project)
+  /** Change the plan. With a label it is one undo step; without, it is a live edit (call checkpoint first). */
+  editPlan: (label: string | null, fn: (plan: PlanData) => PlanData) => void
+  setActiveLevel: (id: string) => void
+  setView: (v: View) => void
+  setPlanTool: (t: PlanTool) => void
+  selectPlan: (sel: PlanSelection) => void
+  setPlacing: (item: string | null) => void
+  setOpeningKind: (k: OpeningKind) => void
+  setUseTour: (on: boolean) => void
+  /** Replace the active project's contents (a template). */
+  loadTemplate: (t: Pick<Project, 'name' | 'levels' | 'walls' | 'openings' | 'rooms' | 'tour'> & { objects: Omit<SceneObject, 'id'>[] }) => void
 }
 
 /** A new object in `addTree`; `parent` is the index of its parent in the same list. */
@@ -301,7 +359,30 @@ export const uid = () => Math.random().toString(36).slice(2, 10)
 export const IDENTITY: Transform = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }
 export const DEFAULT_ANIMATION: Animation = { fps: 30, start: 0, end: 120, interpolation: 'ease', keys: [] }
 export const DEFAULT_PROMPT: PartPrompt = { object: '', parts: '' }
-const newProject = (name: string): Project => ({ id: uid(), name, objects: [], images: [], camera: null, realSize: null, animation: DEFAULT_ANIMATION, prompt: DEFAULT_PROMPT, segmentation: null })
+export const DEFAULT_TOUR: Tour = { points: [], speed: 0.7, eyeHeight: 1.6, focal: 20 }
+export const newLevel = (name: string, elevation = 0): Level => ({ id: uid(), name, elevation, height: 2.6, slab: 0.25 })
+function newProject(name: string): Project {
+  const ground = newLevel('Ground floor')
+  return {
+    id: uid(),
+    name,
+    objects: [],
+    images: [],
+    camera: null,
+    realSize: null,
+    animation: DEFAULT_ANIMATION,
+    prompt: DEFAULT_PROMPT,
+    segmentation: null,
+    levels: [ground],
+    activeLevelId: ground.id,
+    walls: [],
+    openings: [],
+    rooms: [],
+    tour: DEFAULT_TOUR,
+    useTour: false,
+  }
+}
+const planOf = (p: Project): PlanData => ({ levels: p.levels, walls: p.walls, openings: p.openings, rooms: p.rooms, tour: p.tour })
 
 /** `id` and everything nested under it, parents before children. */
 export function subtreeIds(objects: SceneObject[], id: string): string[] {
@@ -317,6 +398,8 @@ export function ancestorIds(objects: SceneObject[], id: string): string[] {
   for (let p = byId.get(id)?.parentId; p && !out.includes(p); p = byId.get(p)?.parentId) out.push(p)
   return out
 }
+
+export const modelUrl = (file: string) => `${import.meta.env.BASE_URL}models/${file}`
 
 /** Blender-style unique names: Mesh, Mesh.001, Mesh.002 … */
 function uniqueName(base: string, taken: string[]) {
@@ -350,6 +433,11 @@ export const useWorkspace = create<WorkspaceState>()(
       playing: false,
       cameraView: false,
       renderJob: null,
+      view: 'split',
+      planTool: 'select',
+      planSel: null,
+      placing: null,
+      openingKind: 'door',
       settings: {
         sam3dServer: 'http://localhost:7860',
         hfToken: '',
@@ -367,6 +455,10 @@ export const useWorkspace = create<WorkspaceState>()(
         refOpacity: 0,
         showTimeline: true,
         rememberKeys: false,
+        showCeilings: false,
+        showUpperLevels: false,
+        grid: 0.05,
+        wallThickness: 0.15,
       },
 
       addProject: () =>
@@ -391,14 +483,14 @@ export const useWorkspace = create<WorkspaceState>()(
             future: s.future.filter((h) => h.projectId !== id),
           }
         }),
-      setActiveProject: (id) => set({ activeProjectId: id, selectedId: null }),
+      setActiveProject: (id) => set({ activeProjectId: id, selectedId: null, planSel: null }),
       renameProject: (id, name) => set((s) => ({ projects: s.projects.map((p) => (p.id === id ? { ...p, name } : p)) })),
       replaceProjects: (projects, activeProjectId) => set({ projects, activeProjectId, selectedId: null, past: [], future: [] }),
 
       checkpoint: (label) =>
         set((s) => {
           const p = activeProject(s)
-          return { past: [...s.past, { projectId: p.id, label, objects: p.objects }].slice(-HISTORY_LIMIT), future: [] }
+          return { past: [...s.past, { projectId: p.id, label, objects: p.objects, plan: planOf(p) }].slice(-HISTORY_LIMIT), future: [] }
         }),
 
       setAutoAngles: (autoAngles, projectId) => set((s) => patchProject(s, projectId ?? s.activeProjectId, (p) => ({ ...p, autoAngles }))),
@@ -444,7 +536,7 @@ export const useWorkspace = create<WorkspaceState>()(
                 id: fresh.get(i)!,
                 name,
                 parentId: i === id ? o.parentId : fresh.get(o.parentId!)!,
-                url: o.blob ? URL.createObjectURL(o.blob) : undefined,
+                url: o.blob ? URL.createObjectURL(o.blob) : o.modelFile ? modelUrl(o.modelFile) : undefined,
                 transform: i === id ? transform : o.transform,
                 keys: i === id ? undefined : o.keys,
                 stats: o.isGroup ? o.stats : undefined,
@@ -466,7 +558,7 @@ export const useWorkspace = create<WorkspaceState>()(
             const added: SceneObject[] = nodes.map(({ parent, ...n }, i) => {
               const name = uniqueName(n.name, taken)
               taken.push(name)
-              return { ...n, id: ids[i], name, parentId: parent === undefined ? null : ids[parent], url: n.blob ? URL.createObjectURL(n.blob) : undefined }
+              return { levelId: p.activeLevelId, ...n, id: ids[i], name, parentId: parent === undefined ? null : ids[parent], url: n.blob ? URL.createObjectURL(n.blob) : undefined }
             })
             return { ...p, objects: [...p.objects, ...added] }
           }),
@@ -481,7 +573,7 @@ export const useWorkspace = create<WorkspaceState>()(
         get().checkpoint(parentId ? 'Move into group' : 'Move out of group')
         set((s) => patchActive(s, (p) => ({ ...p, objects: p.objects.map((o) => (o.id === id ? { ...o, parentId, transform, keys: undefined } : o)) })))
       },
-      addObject: ({ name, blob, primitive, source, fitSize, exact, spec, transform, material }, projectId) => {
+      addObject: ({ name, blob, modelFile, primitive, furniture, surfaces, levelId, source, fitSize, exact, spec, transform, material }, projectId) => {
         const id = uid()
         const target = projectId ?? get().activeProjectId
         if (target === get().activeProjectId) get().checkpoint('Add')
@@ -494,14 +586,18 @@ export const useWorkspace = create<WorkspaceState>()(
                 id,
                 name: uniqueName(name, p.objects.map((o) => o.name)),
                 blob,
-                url: blob ? URL.createObjectURL(blob) : undefined,
+                modelFile,
+                url: blob ? URL.createObjectURL(blob) : modelFile ? modelUrl(modelFile) : undefined,
                 primitive,
+                furniture,
+                surfaces,
+                levelId: levelId ?? p.activeLevelId,
                 source,
                 visible: true,
                 renderable: true,
                 transform: transform ?? IDENTITY,
-                // Primitives already have correct normals; Auto Smooth is for generated meshes.
-                shade: primitive ? 'original' : 'auto',
+                // Primitives and furniture already have correct normals; Auto Smooth is for generated meshes.
+                shade: primitive || furniture ? 'original' : 'auto',
                 material: material ?? null,
                 fitSize: fitSize ?? null,
                 exact,
@@ -531,7 +627,7 @@ export const useWorkspace = create<WorkspaceState>()(
           }
         })
       },
-      select: (id) => set({ selectedId: id }),
+      select: (id) => set(id ? { selectedId: id, planSel: null } : { selectedId: null }),
 
       undo: () =>
         set((s) => {
@@ -541,11 +637,12 @@ export const useWorkspace = create<WorkspaceState>()(
           if (!current) return { past: s.past.slice(0, -1) }
           const ids = new Set(entry.objects.map((o) => o.id))
           return {
-            ...patchProject(s, entry.projectId, (p) => ({ ...p, objects: entry.objects })),
+            ...patchProject(s, entry.projectId, (p) => ({ ...p, objects: entry.objects, ...entry.plan, activeLevelId: entry.plan.levels.some((l) => l.id === p.activeLevelId) ? p.activeLevelId : entry.plan.levels[0].id })),
             activeProjectId: entry.projectId,
             selectedId: s.selectedId && ids.has(s.selectedId) ? s.selectedId : null,
+            planSel: null,
             past: s.past.slice(0, -1),
-            future: [...s.future, { ...entry, objects: current.objects }],
+            future: [...s.future, { ...entry, objects: current.objects, plan: planOf(current) }],
           }
         }),
       redo: () =>
@@ -556,11 +653,12 @@ export const useWorkspace = create<WorkspaceState>()(
           if (!current) return { future: s.future.slice(0, -1) }
           const ids = new Set(entry.objects.map((o) => o.id))
           return {
-            ...patchProject(s, entry.projectId, (p) => ({ ...p, objects: entry.objects })),
+            ...patchProject(s, entry.projectId, (p) => ({ ...p, objects: entry.objects, ...entry.plan, activeLevelId: entry.plan.levels.some((l) => l.id === p.activeLevelId) ? p.activeLevelId : entry.plan.levels[0].id })),
             activeProjectId: entry.projectId,
             selectedId: s.selectedId && ids.has(s.selectedId) ? s.selectedId : null,
+            planSel: null,
             future: s.future.slice(0, -1),
-            past: [...s.past, { ...entry, objects: current.objects }],
+            past: [...s.past, { ...entry, objects: current.objects, plan: planOf(current) }],
           }
         }),
 
@@ -655,6 +753,45 @@ export const useWorkspace = create<WorkspaceState>()(
       setPlaying: (playing) => set({ playing }),
       setCameraView: (cameraView) => set({ cameraView }),
       setRenderJob: (renderJob) => set({ renderJob }),
+
+      editPlan: (label, fn) => {
+        if (label) get().checkpoint(label)
+        set((s) => patchActive(s, (p) => ({ ...p, ...fn(planOf(p)) })))
+      },
+      setActiveLevel: (activeLevelId) => set((s) => ({ ...patchActive(s, (p) => ({ ...p, activeLevelId })), planSel: null, selectedId: null })),
+      setView: (view) => set({ view }),
+      setPlanTool: (planTool) =>
+        set((s) => {
+          // The Door and Window tools each keep to their own kinds of opening.
+          const door = ['door', 'double-door', 'sliding-door', 'archway'].includes(s.openingKind)
+          const openingKind = planTool === 'door' && !door ? 'door' : planTool === 'window' && door ? 'window' : s.openingKind
+          return { planTool, placing: null, openingKind }
+        }),
+      selectPlan: (planSel) => set({ planSel, selectedId: null }),
+      setPlacing: (placing) => set({ placing, planTool: 'select' }),
+      setOpeningKind: (openingKind) => set({ openingKind }),
+      setUseTour: (useTour) => set((s) => patchActive(s, (p) => ({ ...p, useTour }))),
+      loadTemplate: (t) => {
+        get().checkpoint('Template')
+        set((s) => ({
+          ...patchActive(s, (p) => ({
+            ...p,
+            name: t.name,
+            levels: t.levels,
+            activeLevelId: t.levels[0].id,
+            walls: t.walls,
+            openings: t.openings,
+            rooms: t.rooms,
+            tour: t.tour,
+            useTour: t.tour.points.length > 1,
+            camera: null,
+            autoAngles: null,
+            objects: t.objects.map((o) => ({ ...o, id: uid() })),
+          })),
+          selectedId: null,
+          planSel: null,
+        }))
+      },
     }),
     {
       name: 'workspace',
@@ -678,6 +815,7 @@ export const useWorkspace = create<WorkspaceState>()(
       partialize: (s) => ({
         settings: s.settings.rememberKeys ? s.settings : { ...s.settings, hfToken: '' },
         shading: s.shading,
+        view: s.view,
       }),
     },
   ),

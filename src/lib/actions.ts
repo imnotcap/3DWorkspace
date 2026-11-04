@@ -2,6 +2,8 @@ import { importModelFiles, startGeneration } from '@/generation/run'
 import { activeProject, useWorkspace, type ShadingMode, type Transform, type Vec3 } from '@/store/workspace'
 import { download, viewport } from '@/viewport/bridge'
 import { newPrimitive, restingHeight } from './primitives'
+import { autoTour } from '@/plan/tour'
+import { uid } from '@/store/workspace'
 
 let renderAbort: AbortController | null = null
 
@@ -29,9 +31,61 @@ export const actions = {
   frameSelected: () => viewport.frameSelected(),
   frameAll: () => viewport.frameAll(),
 
+  /** Delete the selected object, or the selected wall / door / window / tour point. */
   deleteSelected() {
-    const { selectedId, removeObject } = ws()
-    if (selectedId) removeObject(selectedId)
+    const { selectedId, removeObject, planSel, editPlan, selectPlan } = ws()
+    if (selectedId) return removeObject(selectedId)
+    if (!planSel) return
+    if (planSel.kind === 'wall')
+      editPlan('Delete wall', (p) => ({ ...p, walls: p.walls.filter((w) => w.id !== planSel.id), openings: p.openings.filter((o) => o.wallId !== planSel.id) }))
+    else if (planSel.kind === 'opening') editPlan('Delete opening', (p) => ({ ...p, openings: p.openings.filter((o) => o.id !== planSel.id) }))
+    else if (planSel.kind === 'tour') editPlan('Delete tour point', (p) => ({ ...p, tour: { ...p.tour, points: p.tour.points.filter((t) => t.id !== planSel.id) } }))
+    else return
+    selectPlan(null)
+  },
+
+  /** Delete the active floor with everything on it. */
+  deleteLevel() {
+    const s = ws()
+    const p = project()
+    if (p.levels.length < 2) return
+    const id = p.activeLevelId
+    const wallIds = new Set(p.walls.filter((w) => w.levelId === id).map((w) => w.id))
+    s.editPlan('Delete floor', (pl) => ({
+      ...pl,
+      levels: pl.levels.filter((l) => l.id !== id),
+      walls: pl.walls.filter((w) => w.levelId !== id),
+      openings: pl.openings.filter((o) => !wallIds.has(o.wallId)),
+      rooms: pl.rooms.filter((r) => r.levelId !== id),
+      tour: { ...pl.tour, points: pl.tour.points.filter((t) => t.levelId !== id) },
+    }))
+    const doomed = p.objects.filter((o) => o.levelId === id && !o.parentId)
+    doomed.forEach((o) => s.removeObject(o.id))
+    s.setActiveLevel(p.levels.find((l) => l.id !== id)!.id)
+  },
+
+  /* ───── Tour ───── */
+
+  /** Walk through every room of the active floor, through the doors. */
+  autoTour() {
+    const s = ws()
+    const p = project()
+    const { points, doors } = autoTour(p, p.activeLevelId, uid)
+    if (points.length < 2) return s.setJob({ status: 'error', message: 'No rooms to tour yet.', hint: 'Close some rooms with walls and connect them with doors first.' })
+    // The doors the walk goes through are opened, so the camera doesn't pass through them.
+    s.editPlan('Auto tour', (pl) => ({ ...pl, tour: { ...pl.tour, points }, openings: pl.openings.map((o) => (doors.includes(o.id) && o.open < 0.9 ? { ...o, open: 1 } : o)) }))
+    s.setUseTour(true)
+    s.setFrame(0)
+  },
+
+  clearTour() {
+    ws().editPlan('Clear tour', (pl) => ({ ...pl, tour: { ...pl.tour, points: [] } }))
+    ws().setUseTour(false)
+  },
+
+  async exportPdf() {
+    const { exportPdf } = await import('@/export/pdf')
+    await exportPdf()
   },
 
   cycleShading() {
@@ -162,7 +216,10 @@ export const actions = {
     }
   },
 
-  cancelRender: () => renderAbort?.abort(),
+  cancelRender: () => {
+    renderAbort?.abort()
+    void import('@/export/pdf').then((m) => m.cancelPdf())
+  },
 
   async exportSelected() {
     const s = ws()

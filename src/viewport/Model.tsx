@@ -7,6 +7,7 @@ import { objectTransformAt } from '@/lib/anim'
 import { activeProject, ancestorIds, scaleForSize, subtreeIds, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
 import { primitiveGroup } from '@/generation/parts/build'
+import { buildFurniture } from '@/furniture/build'
 import { reshade, surfaceFor } from './shading'
 
 // BVH-accelerated raycasting: picking a 1M-triangle mesh stays sub-millisecond.
@@ -68,12 +69,32 @@ function PrimitiveModel(props: Props) {
   return <ObjectView {...props} source={source} clone={false} fit={false} recenter={false} />
 }
 
+/** Catalog furniture: rebuilt from its parameters whenever its size or options change. */
+function FurnitureModel(props: Props) {
+  const f = props.obj.furniture!
+  const key = `${f.item}|${f.size.join(',')}|${JSON.stringify(f.options ?? {})}`
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const source = useMemo(() => buildFurniture(f.item, f.size), [key])
+  useEffect(
+    () => () =>
+      source.traverse((o) => {
+        const m = o as Mesh
+        if (m.isMesh) {
+          m.geometry.dispose()
+          ;(Array.isArray(m.material) ? m.material : [m.material]).forEach((x) => x.dispose())
+        }
+      }),
+    [source],
+  )
+  return <ObjectView {...props} source={source} clone={false} fit={false} recenter={false} />
+}
+
 function ObjectView({ obj, selected, shading, source, clone, fit, recenter }: Props & { source: Object3D; clone: boolean; fit: boolean; recenter: boolean }) {
   const group = useRef<Group>(null)
 
   // Normalise once per load: fit into FIT_SIZE units, centre on XZ, rest on the grid.
   // Exact models and primitives keep their metres (metric UVs, real-size textures).
-  const exact = !!obj.exact || !!obj.primitive
+  const exact = !!obj.exact || !!obj.primitive || !!obj.furniture
   const { root, box } = useMemo(() => {
     const root = clone ? source.clone(true) : source
     const v = new Vector3()
@@ -397,7 +418,7 @@ export const Model = memo(function Model({ obj, selectedId, shading, tree }: Tre
   const props = { obj, selected: obj.id === selectedId, shading }
   return (
     <ModelBoundary id={obj.id}>
-      <Suspense fallback={null}>{obj.primitive ? <PrimitiveModel {...props} /> : obj.url ? <GltfModel {...props} /> : null}</Suspense>
+      <Suspense fallback={null}>{obj.furniture ? <FurnitureModel {...props} /> : obj.primitive ? <PrimitiveModel {...props} /> : obj.url ? <GltfModel {...props} /> : null}</Suspense>
     </ModelBoundary>
   )
 })

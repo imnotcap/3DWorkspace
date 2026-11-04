@@ -24,9 +24,11 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { PartsSpec } from '@/generation/parts/spec'
 import { activeProject, useActiveProject, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
-import { visibleBox } from './camera'
+import { sceneBox, visibleBox } from './camera'
 import { Model, withOriginalMaterials, type Tree } from './Model'
-import { CameraView, RenderBridge } from './RenderSystem'
+import { CameraView, RenderBridge, tourActive } from './RenderSystem'
+import { HouseLevel } from './House'
+import { levelElevations } from '@/plan/levels'
 
 const AXIS_X = '#e5484d'
 const AXIS_Z = '#3e63dd'
@@ -103,10 +105,11 @@ function CameraRig() {
   const anim = useRef<{ fromPos: Vector3; toPos: Vector3; fromTarget: Vector3; toTarget: Vector3; t: number } | null>(null)
 
   useEffect(() => {
-    const fit = (objects: Object3D[]) => {
+    /** Frame these objects, or everything (house included) with null. */
+    const fit = (objects: Object3D[] | null) => {
       if (!controls) return
-      const box = new Box3()
-      objects.forEach((o) => visibleBox(o, box))
+      const box = objects ? new Box3() : sceneBox([...viewport.objects.values()])
+      objects?.forEach((o) => visibleBox(o, box))
       if (box.isEmpty()) box.set(new Vector3(-1, 0, -1), new Vector3(1, 2, 1))
       const sphere = box.getBoundingSphere(new Sphere())
       const fov = (camera.fov * Math.PI) / 180
@@ -125,13 +128,25 @@ function CameraRig() {
       useWorkspace.getState().setCameraView(false)
       const id = useWorkspace.getState().selectedId
       const o = id ? viewport.objects.get(id) : undefined
-      fit(o ? [o] : roots())
+      fit(o ? [o] : null)
     }
     viewport.frameAll = () => {
       useWorkspace.getState().setCameraView(false)
-      fit(roots())
+      fit(null)
     }
   }, [camera, controls, invalidate])
+
+  // Frame the house when the view opens, a project or template loads, or the first walls appear.
+  useEffect(() => {
+    const later = () => setTimeout(() => viewport.frameAll(), 120)
+    return useWorkspace.subscribe((s, prev) => {
+      const p = activeProject(s)
+      const q = activeProject(prev)
+      if (s.view !== prev.view && s.view !== 'plan') later()
+      else if (s.activeProjectId !== prev.activeProjectId) later()
+      else if (p.walls.length && (!q.walls.length || p.name !== q.name)) later()
+    })
+  }, [])
 
   useFrame((_, dt) => {
     const a = anim.current
@@ -279,6 +294,13 @@ function commitTransform(o: Object3D, tool: keyof typeof TOOL_LABEL) {
   else s.commit(TOOL_LABEL[tool], id, { transform })
 }
 
+/** Dark studio while editing; daylight sky when walking through the house. */
+function Background() {
+  const project = useActiveProject()
+  const walking = useWorkspace((s) => s.cameraView) && tourActive(project)
+  return <color attach="background" args={[walking ? '#dfe6ec' : '#141414']} />
+}
+
 function SceneContent() {
   const project = useActiveProject()
   const selectedId = useWorkspace((s) => s.selectedId)
@@ -287,6 +309,25 @@ function SceneContent() {
   const showGrid = useWorkspace((s) => s.settings.showGrid)
   const invalidate = useThree((s) => s.invalidate)
   const [target, setTarget] = useState<Object3D | null>(null)
+  const cameraView = useWorkspace((s) => s.cameraView)
+  // Looking through the tour camera: inside the house, so ceilings and every floor are on.
+  const walking = cameraView && tourActive(project)
+  const showCeilings = useWorkspace((s) => s.settings.showCeilings) || walking
+  const showUpper = useWorkspace((s) => s.settings.showUpperLevels) || walking
+  const elevations = useMemo(() => levelElevations(project.levels), [project.levels])
+  const activeIndex = Math.max(0, project.levels.findIndex((l) => l.id === project.activeLevelId))
+  // Top-level objects grouped by the floor they stand on (unknown floors → the first).
+  const byLevel = useMemo(() => {
+    const ids = new Set(project.levels.map((l) => l.id))
+    const ok = new Set(project.objects.map((o) => o.id))
+    const m = new Map<string, SceneObject[]>()
+    for (const o of project.objects) {
+      if (o.parentId && ok.has(o.parentId)) continue
+      const l = o.levelId && ids.has(o.levelId) ? o.levelId : project.levels[0].id
+      m.set(l, [...(m.get(l) ?? []), o])
+    }
+    return m
+  }, [project.objects, project.levels])
   const tree = useMemo(() => {
     const t: Tree = new Map()
     const ids = new Set(project.objects.map((o) => o.id))
@@ -310,27 +351,41 @@ function SceneContent() {
       <StudioEnvironment />
       <hemisphereLight args={['#ffffff', '#3a3a3a', light.fill]} />
       <directionalLight
-        position={[4, 7, 3]}
+        position={[8, 14, 6]}
         intensity={light.key}
         castShadow={rendered}
-        shadow-mapSize={[2048, 2048]}
+        shadow-mapSize={[4096, 4096]}
         shadow-bias={-0.0004}
-        shadow-camera-left={-4}
-        shadow-camera-right={4}
-        shadow-camera-top={4}
-        shadow-camera-bottom={-4}
+        shadow-normalBias={0.02}
+        shadow-camera-left={-20}
+        shadow-camera-right={20}
+        shadow-camera-top={20}
+        shadow-camera-bottom={-20}
+        shadow-camera-far={60}
       />
 
-      {(tree.get(null) ?? []).map((o) => (
-        <Model key={o.id} obj={o} selectedId={selectedId} shading={shading} tree={tree} />
+      {project.levels.map((level, i) => (
+        <group
+          key={level.id}
+          name={`level:${level.id}`}
+          position-y={elevations.get(level.id) ?? 0}
+          visible={showUpper || i <= activeIndex}
+          userData={{ levelIndex: i }}
+        >
+          <HouseLevel project={project} level={level} index={i} ceilings={showCeilings} />
+          {(byLevel.get(level.id) ?? []).map((o) => (
+            <Model key={o.id} obj={o} selectedId={selectedId} shading={shading} tree={tree} />
+          ))}
+        </group>
       ))}
 
       {rendered && <ContactShadows position={[0, 0.001, 0]} opacity={0.55} scale={12} blur={2.4} far={4} resolution={512} />}
 
       <group name="__helpers">
-        {showGrid && (
+        {showGrid && !walking && (
           <>
             <Grid
+              position={[0, -0.004, 0]}
               raycast={() => {}}
               infiniteGrid
               cellSize={0.1}
@@ -369,7 +424,7 @@ export function Viewport() {
       }}
       className="!absolute inset-0"
     >
-      <color attach="background" args={['#141414']} />
+      <Background />
       <SceneContent />
       <CameraRig />
       <Bridge />

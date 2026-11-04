@@ -27,6 +27,10 @@ jobs:
       # CC0 PBR textures from ambientCG; on failure the app uses procedural textures.
       - run: npm run textures
         continue-on-error: true
+      # Photoreal furniture (Khronos glTF Sample Assets, CC0 / CC BY 4.0); missing ones are hidden in the catalog.
+      - run: npm run models
+        continue-on-error: true
+      - run: npm test
       - run: npm run build
         env:
           BASE_PATH: /${{ github.event.repository.name }}/

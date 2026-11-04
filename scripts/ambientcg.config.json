@@ -1,17 +1,133 @@
 {
-  "_comment": "Preset id → ambientCG search. Set \"id\" to pin an exact asset (e.g. \"Wood049\"); leave null to use the top search result. tile_m = metres one texture repeat covers.",
-  "oak":           { "query": "oak wood",            "id": null, "tile_m": 1.2 },
-  "walnut":        { "query": "walnut wood",         "id": null, "tile_m": 1.2 },
-  "birch":         { "query": "plywood",             "id": null, "tile_m": 1.2 },
-  "laminate":      { "query": "plastic",             "id": null, "tile_m": 1.0 },
-  "marble":        { "query": "marble",              "id": null, "tile_m": 1.5 },
-  "concrete":      { "query": "concrete",            "id": null, "tile_m": 2.0 },
-  "brushed-alu":   { "query": "brushed metal",       "id": null, "tile_m": 0.6 },
-  "brushed-steel": { "query": "brushed metal",       "id": null, "tile_m": 0.6 },
-  "powder-black":  { "query": "painted metal",       "id": null, "tile_m": 0.8 },
-  "powder-anthracite": { "query": "painted metal",   "id": null, "tile_m": 0.8 },
-  "powder-white":  { "query": "painted metal",       "id": null, "tile_m": 0.8 },
-  "leather":       { "query": "leather",             "id": null, "tile_m": 0.5 },
-  "felt":          { "query": "fabric",              "id": null, "tile_m": 0.5 },
-  "rubber":        { "query": "rubber",              "id": null, "tile_m": 0.4 }
+  "_comment": "Preset id \u2192 ambientCG search. Set \"id\" to pin an exact asset (e.g. \"Wood049\"); leave null to use the top search result. tile_m = metres one texture repeat covers.",
+  "oak": {
+    "query": "oak wood",
+    "id": null,
+    "tile_m": 1.2
+  },
+  "walnut": {
+    "query": "walnut wood",
+    "id": null,
+    "tile_m": 1.2
+  },
+  "birch": {
+    "query": "plywood",
+    "id": null,
+    "tile_m": 1.2
+  },
+  "laminate": {
+    "query": "plastic",
+    "id": null,
+    "tile_m": 1.0
+  },
+  "marble": {
+    "query": "marble",
+    "id": null,
+    "tile_m": 1.5
+  },
+  "concrete": {
+    "query": "concrete",
+    "id": null,
+    "tile_m": 2.0
+  },
+  "brushed-alu": {
+    "query": "brushed metal",
+    "id": null,
+    "tile_m": 0.6
+  },
+  "brushed-steel": {
+    "query": "brushed metal",
+    "id": null,
+    "tile_m": 0.6
+  },
+  "powder-black": {
+    "query": "painted metal",
+    "id": null,
+    "tile_m": 0.8
+  },
+  "powder-anthracite": {
+    "query": "painted metal",
+    "id": null,
+    "tile_m": 0.8
+  },
+  "powder-white": {
+    "query": "painted metal",
+    "id": null,
+    "tile_m": 0.8
+  },
+  "leather": {
+    "query": "leather",
+    "id": null,
+    "tile_m": 0.5
+  },
+  "felt": {
+    "query": "fabric",
+    "id": null,
+    "tile_m": 0.5
+  },
+  "rubber": {
+    "query": "rubber",
+    "id": null,
+    "tile_m": 0.4
+  },
+  "oak-floor": {
+    "query": "wood floor",
+    "id": null,
+    "tile_m": 1.5
+  },
+  "walnut-floor": {
+    "query": "dark wood floor",
+    "id": null,
+    "tile_m": 1.5
+  },
+  "grey-tile": {
+    "query": "floor tiles",
+    "id": null,
+    "tile_m": 1.0
+  },
+  "white-tile": {
+    "query": "white tiles",
+    "id": null,
+    "tile_m": 0.6
+  },
+  "terrazzo": {
+    "query": "terrazzo",
+    "id": null,
+    "tile_m": 1.0
+  },
+  "quartz": {
+    "query": "terrazzo",
+    "id": null,
+    "tile_m": 0.8
+  },
+  "carpet": {
+    "query": "carpet",
+    "id": null,
+    "tile_m": 1.0
+  },
+  "polished-concrete": {
+    "query": "concrete",
+    "id": null,
+    "tile_m": 2.0
+  },
+  "linen": {
+    "query": "fabric",
+    "id": null,
+    "tile_m": 0.4
+  },
+  "cotton": {
+    "query": "fabric",
+    "id": null,
+    "tile_m": 0.4
+  },
+  "wool": {
+    "query": "wool fabric",
+    "id": null,
+    "tile_m": 0.4
+  },
+  "velvet": {
+    "query": "velvet",
+    "id": null,
+    "tile_m": 0.4
+  }
 }

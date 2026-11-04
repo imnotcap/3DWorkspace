@@ -6,7 +6,7 @@ import { Button, Field, Slider, Toggle, inputCls } from '@/ui/primitives'
 import { COLOR_PALETTE, MATERIAL_LIBRARY, presetById, type MaterialPreset } from '@/viewport/materialPresets'
 
 const ALL = '__all'
-const CATEGORIES = ['Metal', 'Coating', 'Plastic', 'Wood', 'Stone', 'Glass', 'Fabric'] as const
+const CATEGORIES = ['Fabric', 'Wood', 'Metal', 'Coating', 'Plastic', 'Stone', 'Glass', 'Floor'] as const
 
 /** CSS "material ball" so swatches read as metal / gloss / matte at a glance. */
 function Ball({ color, roughness = 0.5, metalness = 0, size = 'size-4' }: { color: string; roughness?: number; metalness?: number; size?: string }) {

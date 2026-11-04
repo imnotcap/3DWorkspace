@@ -12,8 +12,12 @@ export interface VideoResult {
  */
 export const viewport = {
   objects: new Map<string, Object3D>(),
+  /** Built house levels (walls, floors…) by level id. */
+  houses: new Map<string, Object3D>(),
   frameSelected: () => {},
   frameAll: () => {},
+  /** Fit the 2D plan to the view. */
+  fitPlan: () => {},
   invalidate: () => {},
   exportGlb: async (_id: string): Promise<Blob | null> => null,
   exportScene: async (): Promise<Blob | null> => null,
@@ -28,6 +32,8 @@ export const viewport = {
   /** Distance that keeps the scene in frame for a full orbit around `pose`. */
   orbitRadius: (_pose: CameraPose): number | null => null,
   renderStill: async (): Promise<Blob | null> => null,
+  /** Render one shot at its own size, with ceilings/levels as asked (PDF pages). */
+  renderShot: async (_pose: CameraPose, _opts: { width: number; height: number; transparent?: boolean; ceilings: boolean; maxLevel: number | null; background?: string }): Promise<Blob | null> => null,
   renderVideo: async (_onFrame: (done: number, total: number) => void, _signal: AbortSignal): Promise<VideoResult | null> => null,
 }
 

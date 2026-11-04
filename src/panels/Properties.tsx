@@ -210,6 +210,7 @@ function ObjectTab() {
         </div>
       </Field>
       {obj.primitive && <ShapeSection obj={obj} />}
+      {obj.furniture && <FurnitureSection obj={obj} />}
       <VecField label="Location" value={t.position} step={0.01} min={-1000} max={1000} onChange={(position) => set({ position })} onCommit={done} />
       <VecField
         label="Rotation"
@@ -222,7 +223,7 @@ function ObjectTab() {
         onCommit={done}
       />
       <VecField label="Scale" value={t.scale} step={0.01} min={0.01} max={100} onChange={(scale) => set({ scale })} onCommit={done} />
-      {obj.stats?.size && (
+      {obj.stats?.size && !obj.furniture && (
         <DimensionsField
           base={obj.stats.size}
           scale={t.scale}
@@ -494,6 +495,50 @@ function DimensionsField({ base, scale, realSize, onChange, onCommit, onApply }:
           </Button>
         )}
       </div>
+    </>
+  )
+}
+
+/** Catalog furniture: its real size in cm. The piece is rebuilt to fit (more seats, more doors…). */
+function FurnitureSection({ obj }: { obj: SceneObject }) {
+  const f = obj.furniture!
+  const { updateObject, checkpoint } = useWorkspace.getState()
+  const editing = useRef(false)
+  const set = (i: number, cm: number) => {
+    if (!editing.current) {
+      checkpoint('Size')
+      editing.current = true
+    }
+    const size = [...f.size] as Vec3
+    size[i] = Math.max(0.01, cm / 100)
+    updateObject(obj.id, { furniture: { ...f, size } })
+  }
+  return (
+    <>
+      <Field label="Size (cm)" hint="Width, height, depth. Resizing rebuilds the piece: a wider sofa gets more seats, a wider wardrobe more doors.">
+        <div className="grid grid-cols-3 gap-1">
+          {(['W', 'H', 'D'] as const).map((k, i) => (
+            <ScrubField
+              key={k}
+              label={k}
+              suffix=""
+              value={+(f.size[i] * 100).toFixed(1)}
+              min={1}
+              max={2000}
+              step={1}
+              size="sm"
+              showDelta={false}
+              rubberReach={0}
+              chipColor="#0d0d0d"
+              accent="#4c8dff"
+              className="!h-6.5 !w-full !gap-0 !pr-1.5 font-mono !text-2xs"
+              onChange={(v) => set(i, v)}
+              onCommit={() => (editing.current = false)}
+            />
+          ))}
+        </div>
+      </Field>
+      <div className="h-px bg-line" />
     </>
   )
 }

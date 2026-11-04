@@ -1,14 +1,58 @@
-# 3D Workspace
+# 3D Workspace · home planner
 
-A browser-based 3D workspace that turns a photo into a 3D model made of separate, editable parts, with Meta's SAM 3 and SAM 3D Objects. It is laid out like a DCC app: project tabs, an outliner, a tool strip, shading modes and an orientation gizmo. It's a static site that deploys to GitHub Pages.
+A browser app for planning interiors: draw the floor plan and the house builds itself in 3D (walls, doors, windows, floors, ceilings, several storeys). Paint walls, choose floors, furnish it from a catalog, walk through it on video, and export the whole design as a presentation PDF with 4K renders. It's a static site that deploys to GitHub Pages; projects are saved in your browser.
 
 ## Stack
 
-Vite · React 19 · TypeScript · Tailwind v4 · Motion · React Three Fiber + drei (three.js) · Zustand · react-resizable-panels
+Vite · React 19 · TypeScript · Tailwind v4 · Motion · React Three Fiber + drei (three.js) · Zustand · react-resizable-panels · jsPDF + svg2pdf.js
 
-## Generation: Meta SAM 3D
+## Plan your home
 
-Models are built by Meta's **SAM 3** and **SAM 3D Objects**, running on your own SAM 3D server ([worker/sam3d](worker/sam3d/README.md): Docker on an NVIDIA GPU with 32 GB+, locally, on a rented GPU or as a Hugging Face Space).
+The workspace shows the **plan** (2D), the **3D view**, or both side by side (**Split**). Everything you draw in the plan is built in 3D straight away.
+
+| Tool | Key | What it does |
+| --- | --- | --- |
+| Select | V | Click walls, doors, windows, rooms and furniture. Drag a wall to move it (joined walls follow), drag its end points, drag doors and windows along their wall, drag furniture (it snaps back-first to walls; Alt moves freely) and rotate it with its handle. |
+| Wall | W | Click corner to corner. Snaps to wall ends, onto walls (T-joints), to 15° angles, to the 5 cm grid and into line with other corners. Closing the loop or ending on a wall finishes; Esc or right-click stops. |
+| Room | M | Drag a rectangle: four walls (sides that already have a wall are skipped). |
+| Door | D | Door, double door, sliding door or plain opening, placed on the wall under the pointer and opening towards the side you click on. |
+| Window | O | Window, wide window or French window. |
+| Tour | T | Click to lay out a walkthrough path; **Auto tour** makes one through every room. |
+
+- **Rooms are found automatically** from the walls: each enclosed space becomes a room with its floor area (inside the walls), name and finishes. Walls are mitred at corners and trimmed at T-joints; openings are cut exactly.
+- **Floors:** add storeys with **+** next to the level tabs. Each floor has its own ceiling height; the floor above sits on its slab. The level below shows faintly in the plan for alignment, and **Straight stairs** from the catalog cut the opening in the floor above.
+- **Inspector** (right): wall length, thickness and height (lower = half wall); door and window type, size, sill, hinge side, swing side and how far it stands open; room name; floor height.
+- **Templates:** a furnished two-bedroom apartment, a two-storey house, or an empty plan.
+- Undo/redo covers the plan, the furniture and the finishes.
+
+## Paint and finishes
+
+Select a room (click it in the plan or the 3D view) to set its **floor** (oak or walnut planks, stone or white tiles, terrazzo, carpet, polished concrete), **wall paint** (18 interior colours or any colour, or white tiles) and **ceiling**. Select a wall to give one side an accent colour, independent of the room. In 3D, every stretch of wall takes the paint of the room it faces.
+
+## Furniture
+
+The **Furniture** tab has about 50 pieces in 9 categories (living, dining, kitchen, bedroom, bathroom, office, lighting, decor, structure). Pick one and click in the plan: it lands against the nearest wall, facing into the room (R rotates, Shift keeps placing).
+
+- **Parametric pieces** are built from their size, so you can type any width, height and depth in the Inspector and the piece is rebuilt to fit: a wider sofa gets more seat cushions, a wider wardrobe more doors, kitchen cabinets keep their plinth and worktop. Every material slot (fabric, legs, fronts, worktop, handles…) takes any finish from the library.
+- **Photoreal pieces** (velvet and leather sofas, armchairs, a silk pouf, lamps, a plant, flowers) are production-quality models from the [Khronos glTF Sample Assets](https://github.com/KhronosGroup/glTF-Sample-Assets) (CC0 / CC BY 4.0, credited in the PDF). `npm run models` downloads them at build time.
+- **Your own pieces:** import a .glb, or make one from a photo with SAM 3D (below).
+
+## Walkthrough video
+
+Make a tour in the **Tour** tool (or **Auto tour**: it walks from the front door through every room, opening the doors on its way). With *Camera: follows the tour* (Inspector), the render camera walks the path at eye height with a gentle start and stop; the timeline covers the whole walk. Press **0** and **Space** to watch it in the 3D view, **Ctrl+F12** to render it to MP4 at any resolution up to 4K. Speed, lens and eye height are in the Inspector.
+
+## PDF export
+
+**Export PDF** builds an A4 landscape presentation:
+
+1. Cover: a 4K render of the whole home, its floor area, rooms, floors and number of pieces.
+2. Per floor: the floor plan as vector graphics (walls, doors with swings, windows, furniture, room names and areas, dimensions, scale bar, north arrow) with a room schedule, then a 4K cutaway 3D view of that floor.
+3. Per room: a 4K interior render from the corner that sees the most of it, its area and ceiling height, floor, wall and ceiling finishes as swatches, a key plan with the room highlighted, and the furniture in it.
+4. Schedules: finishes, doors and windows (by type and size), and furniture (size, room, finishes); then credits.
+
+## Furniture from a photo: Meta SAM 3D
+
+In the **Photo → 3D** tab, a photo of a piece of furniture becomes an editable 3D model, built by Meta's **SAM 3** and **SAM 3D Objects** on your own SAM 3D server ([worker/sam3d](worker/sam3d/README.md): Docker on an NVIDIA GPU with 32 GB+, locally, on a rented GPU or as a Hugging Face Space).
 
 1. **Front photo.** Add a photo of the object and tag it **Front** (the first photo is tagged Front automatically). Other photos stay as your reference; SAM 3D builds from one photo.
 2. **What is it, and its parts.** Name the object ("office chair") and, optionally, its parts ("seat, backrest, armrest, wheel"). With no part names, SAM 3 finds the parts by itself (or, with *Find parts* off in Generate settings, the whole object is one part).
@@ -75,6 +119,10 @@ Push to `main`. `.github/workflows/deploy.yml` builds and publishes to Pages. En
 | I / Alt + I | Insert / delete keyframe (selected object, or the camera) |
 | Ctrl + F12 | Render animation |
 | Shift + N | New project tab |
+| V / W / M / D / O / T | Plan tools: select, wall, room, door, window, tour |
+| R (while placing furniture) | Rotate the piece 90° |
+| Esc | Stop drawing or placing, then back to Select, then deselect |
+| Wheel, middle/right drag (plan) | Zoom, pan |
 
 Transform fields in the Object panel (N) are drag-to-scrub: drag to change, Shift for coarse, Alt for fine, click to type.
 
@@ -136,5 +184,8 @@ Generated meshes are as good as SAM 3D Objects makes them: a convincing shape an
 Projects, meshes, the part tree, transforms, input photos and part masks are saved to IndexedDB, so a reload restores your work. Settings are kept in `localStorage`. Nothing leaves the browser except the Front photo and part masks you send to your SAM 3D server.
 
 ## Credits
+
+Photoreal furniture: [Khronos glTF Sample Assets](https://github.com/KhronosGroup/glTF-Sample-Assets) by Eric Chadwick, Fran Calvente, Rico Cilliers and DGG (CC0 / CC BY 4.0; each model's licence is listed in its catalog tooltip and in exported PDFs). Material textures: [ambientCG](https://ambientcg.com) (CC0).
+
 
 `src/components/reactbits/` contains ScrubField, CountUp and ShinyText from [React Bits](https://github.com/DavidHDev/react-bits) (MIT + Commons Clause, see the LICENSE in that folder).

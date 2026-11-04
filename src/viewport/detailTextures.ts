@@ -85,6 +85,42 @@ function paint(kind: DetailTexture): HTMLCanvasElement {
         case 'powder':
           g = 0.9 + 0.08 * (n(u * 220, v * 220) - 0.5)
           break
+        case 'planks': {
+          // One texture = 1 m: 6 rows of planks, each 1.2 m long with staggered joints.
+          const rows = 6
+          const row = Math.floor(v * rows)
+          const off = ((row * 0.37) % 1) * 1.2
+          const along = (u + off) % 0.6
+          const seamV = Math.min(v * rows - row, row + 1 - v * rows) < 0.03
+          const seamU = Math.min(along, 0.6 - along) < 0.004
+          const tone = (n(row * 3.1, Math.floor((u + off) / 0.6) * 1.7) - 0.5) * 0.18
+          const grain = fbm(n, u * 4 + row * 10, v * rows * 24, 3)
+          g = seamV || seamU ? 0.42 : 0.8 + tone + 0.12 * (grain - 0.5) + 0.04 * Math.sin((v * rows * 40 + grain * 5) * Math.PI)
+          break
+        }
+        case 'tiles':
+        case 'small-tiles': {
+          // 'tiles': 2 × 2 tiles of 50 cm per metre; 'small-tiles': 5 × 5 tiles of 20 cm.
+          const k = kind === 'tiles' ? 2 : 5
+          const fu = (u * k) % 1
+          const fv = (v * k) % 1
+          const grout = Math.min(fu, 1 - fu, fv, 1 - fv) < (kind === 'tiles' ? 0.008 : 0.02)
+          const tile = n(Math.floor(u * k) * 2.3, Math.floor(v * k) * 1.9)
+          g = grout ? 0.62 : 0.9 + (tile - 0.5) * 0.06 + 0.04 * (fbm(n, u * 30, v * 30, 2) - 0.5)
+          break
+        }
+        case 'terrazzo': {
+          const chip = n(u * 70, v * 70)
+          const chip2 = n(u * 23 + 5, v * 23 + 9)
+          g = 0.9 + (chip > 0.8 ? -0.35 : 0) + (chip2 > 0.84 ? -0.22 : 0) + 0.05 * (fbm(n, u * 8, v * 8, 3) - 0.5)
+          break
+        }
+        case 'weave': {
+          const a = Math.sin(u * SIZE * 1.6) * 0.5 + 0.5
+          const b = Math.sin(v * SIZE * 1.6) * 0.5 + 0.5
+          g = 0.8 + 0.08 * ((Math.floor(u * SIZE * 0.51) + Math.floor(v * SIZE * 0.51)) % 2 ? a : b) + 0.1 * (fbm(n, u * 20, v * 60, 3) - 0.5)
+          break
+        }
       }
       const k = Math.max(0, Math.min(255, Math.round(g * 255)))
       const i = (y * SIZE + x) * 4
