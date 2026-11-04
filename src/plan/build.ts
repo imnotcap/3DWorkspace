@@ -9,6 +9,7 @@ import {
   Mesh,
   MeshPhysicalMaterial,
   MeshStandardMaterial,
+  PlaneGeometry,
   Shape,
   ShapeUtils,
   Vector2,
@@ -131,6 +132,9 @@ interface Hole {
   /** The hole really starts / ends here (on a curved wall a hole spans several pieces). */
   cap0?: boolean
   cap1?: boolean
+  /** Where the wall faces are cut (wider than u0..u1 where the hole runs on into the next piece, so the mitred joint leaves no sliver). */
+  cut0?: number
+  cut1?: number
 }
 
 function wallSide(g: WallGeom, side: 'left' | 'right', bottom: number, top: number, holes: Hole[], segments: { u0: number; u1: number }[]): Builder[] {
@@ -153,8 +157,10 @@ function wallSide(g: WallGeom, side: 'left' | 'right', bottom: number, top: numb
     const us = new Set([u0, u1])
     const vs = new Set([bottom, top])
     for (const h of holes) {
-      if (h.u1 <= u0 || h.u0 >= u1) continue
-      us.add(Math.max(u0, h.u0)).add(Math.min(u1, h.u1))
+      const c0 = h.cut0 ?? h.u0
+      const c1 = h.cut1 ?? h.u1
+      if (c1 <= u0 || c0 >= u1) continue
+      us.add(Math.max(u0, c0)).add(Math.min(u1, c1))
       vs.add(Math.max(bottom, Math.min(top, h.v0))).add(Math.max(bottom, Math.min(top, h.v1)))
     }
     const U = [...us].sort((x, y) => x - y)
@@ -163,7 +169,7 @@ function wallSide(g: WallGeom, side: 'left' | 'right', bottom: number, top: numb
       for (let j = 0; j + 1 < Vs.length; j++) {
         const cu = (U[i] + U[i + 1]) / 2
         const cv = (Vs[j] + Vs[j + 1]) / 2
-        if (holes.some((h) => cu > h.u0 && cu < h.u1 && cv > h.v0 && cv < h.v1)) continue
+        if (holes.some((h) => cu > (h.cut0 ?? h.u0) && cu < (h.cut1 ?? h.u1) && cv > h.v0 && cv < h.v1)) continue
         const a = U[i]
         const c = U[i + 1]
         const lo = Vs[j]
@@ -224,7 +230,7 @@ export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGe
         return e - a > 1e-4 ? { o, u0: (a - s0) * k, u1: (e - s0) * k, cap0: o.t - o.width / 2 >= s0 - 1e-6, cap1: o.t + o.width / 2 <= s0 + segArc + 1e-6 || !w.parentId } : null
       })
       .filter((x) => !!x)
-    const holes: Hole[] = clipped.map((c) => ({ u0: c.u0, u1: c.u1, v0: c.o.sill, v1: Math.min(top - 0.01, c.o.sill + c.o.height), cap0: c.cap0, cap1: c.cap1 }))
+    const holes: Hole[] = clipped.map((c) => ({ u0: c.u0, u1: c.u1, v0: c.o.sill, v1: Math.min(top - 0.01, c.o.sill + c.o.height), cap0: c.cap0, cap1: c.cap1, cut0: c.cap0 ? c.u0 : c.u0 - 1, cut1: c.cap1 ? c.u1 : c.u1 + 1 }))
 
     for (const side of ['left', 'right'] as const) {
       const corner0 = side === 'left' ? g.la : g.ra
@@ -486,7 +492,24 @@ function windowPiece(o: Opening, g: WallGeom, len: number, H: number, cap0: bool
     grp.add(box(jamb, H, T + 0.004, frameM, sx * (len / 2 - jamb / 2), H / 2, 0))
     grp.add(box(fw, H - jamb, depth, frameM, sx * (len / 2 - jamb - fw / 2), (H - jamb) / 2, 0))
   }
-  const pane = new Mesh(new BoxGeometry(L, Math.max(0.01, H - jamb - fw * 2), 0.006), GLASS)
+  // Glass: a thin sheet exactly as long as the piece, on the wall's centre line, so neighbouring
+  // pieces meet edge to edge and read as one bent pane (no overlaps, no edges showing as lines).
+  const sheet = new PlaneGeometry(len, Math.max(0.01, H - jamb - fw * 2))
+  // Normals follow the circle (like the wall), so reflections glide smoothly across the pieces.
+  const c = g.wall.centre
+  if (c) {
+    const mid: Vec2 = [(g.wall.a[0] + g.wall.b[0]) / 2, (g.wall.a[1] + g.wall.b[1]) / 2]
+    const cz = (c[0] - mid[0]) * g.n[0] + (c[1] - mid[1]) * g.n[1] // the centre, in the piece's local z
+    const pos = sheet.attributes.position
+    const nor = sheet.attributes.normal
+    for (let i = 0; i < pos.count; i++) {
+      const v = new Vector3(pos.getX(i), 0, -cz).normalize()
+      if (v.z < 0) v.negate()
+      nor.setXYZ(i, v.x, 0, v.z)
+    }
+    nor.needsUpdate = true
+  }
+  const pane = new Mesh(sheet, GLASS)
   pane.position.set(0, (H - jamb) / 2, 0)
   grp.add(pane)
   grp.add(box(L, 0.025, T / 2 + 0.04, frameM, 0, -0.0125 + 0.004, zIn * (T / 4 + 0.02)))
