@@ -1,0 +1,75 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* Surfaces, darkest to lightest */
+  --color-app: #070707;
+  --color-panel: #121212;
+  --color-panel-2: #171717;
+  --color-raised: #1f1f1f;
+  --color-hover: #262626;
+  --color-active: #2e2e2e;
+  --color-line: #222222;
+  --color-line-strong: #2f2f2f;
+  --color-viewport: #141414;
+
+  /* Text */
+  --color-fg: #d6d6d6;
+  --color-dim: #8f8f8f;
+  --color-faint: #5c5c5c;
+
+  /* Accent + axes */
+  --color-accent: #4c8dff;
+  --color-accent-soft: #4c8dff26;
+  --color-axis-x: #e5484d;
+  --color-axis-y: #46a758;
+  --color-axis-z: #3e63dd;
+  --color-warn: #f5a524;
+  --color-danger: #e5484d;
+  --color-ok: #46a758;
+
+  --text-2xs: 10.5px;
+  --text-xs: 11.5px;
+  --text-sm: 12.5px;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--color-app);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    user-select: none;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  input,
+  select,
+  textarea {
+    user-select: text;
+  }
+  ::selection {
+    background: var(--color-accent-soft);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #2a2a2a transparent;
+  }
+  :focus-visible {
+    outline: 1px solid var(--color-accent);
+    outline-offset: -1px;
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
