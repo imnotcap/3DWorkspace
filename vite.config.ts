@@ -9,4 +9,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   build: { target: 'es2022', chunkSizeWarningLimit: 1500 },
+  // three-mesh-bvh starts its BVH worker from `new URL(…, import.meta.url)`, which pre-bundling would break.
+  optimizeDeps: { exclude: ['three-mesh-bvh'] },
+  worker: { format: 'es' },
 })

@@ -1,4 +1,4 @@
-import { importModelFiles, startGeneration } from '@/generation/run'
+import { importModelFiles } from './importFiles'
 import { activeProject, useWorkspace, type ShadingMode, type Transform, type Vec3 } from '@/store/workspace'
 import { download, viewport } from '@/viewport/bridge'
 import { newPrimitive, restingHeight } from './primitives'
@@ -282,13 +282,9 @@ export const actions = {
   },
 
   importGlb: () => actions.pickFiles('.glb', importModelFiles),
-  addImages: () => actions.pickFiles('image/*', (f) => ws().addImages(f)),
-  generate: () => startGeneration(),
 
-  /** Route dropped files: images → inputs, .glb → scene. */
+  /** Dropped .glb files go into the scene. */
   handleDrop(files: File[]) {
-    const images = files.filter((f) => f.type.startsWith('image/'))
-    if (images.length) ws().addImages(images)
     importModelFiles(files)
   },
 }

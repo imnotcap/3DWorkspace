@@ -15,7 +15,7 @@ export function tourPath(project: Pick<Project, 'tour' | 'levels'>) {
   const P = [pts[0], ...pts, pts[pts.length - 1]]
   for (let i = 1; i + 2 < P.length; i++) {
     const [p0, p1, p2, p3] = [P[i - 1], P[i], P[i + 1], P[i + 2]]
-    const steps = Math.max(8, Math.ceil(dist3(p1, p2) / 0.05))
+    const steps = Math.max(12, Math.ceil(dist3(p1, p2) / 0.02))
     for (let k = 0; k < steps; k++) line.push(catmull(p0, p1, p2, p3, k / steps))
   }
   line.push(pts[pts.length - 1])
@@ -82,11 +82,23 @@ export function tourPose(project: Pick<Project, 'tour' | 'levels'>, frame: numbe
   const t = Math.max(0, Math.min(T, frame / fps))
   const s = t < ta ? (0.5 * v * t * t) / ta : t > T - ta ? path.length - (0.5 * v * (T - t) * (T - t)) / ta : 0.5 * v * ta + v * (t - ta)
   const pos = at(path, s)
-  const ahead = 0.9
-  const a = at(path, Math.min(path.length, s + ahead))
-  const b = s + ahead > path.length ? at(path, Math.max(0, path.length - ahead)) : pos
-  let fx = a[0] - b[0]
-  let fz = a[2] - b[2]
+  // Heading: the path's direction averaged over the next ~2 m (Gaussian weights), so the camera
+  // turns into corners gently instead of snapping to each bend, like a steadicam operator.
+  let fx = 0
+  let fz = 0
+  const span = Math.min(2.2, Math.max(0.2, path.length * 0.5))
+  for (let k = 0; k <= 16; k++) {
+    const d = (k / 16) * span
+    const u = Math.max(0.03, Math.min(path.length - 0.03, s + d))
+    const p0 = at(path, u - 0.03)
+    const p1 = at(path, u + 0.03)
+    const tx = p1[0] - p0[0]
+    const tz = p1[2] - p0[2]
+    const tl = Math.hypot(tx, tz) || 1
+    const w = Math.exp(-((d / span - 0.25) ** 2) / 0.12)
+    fx += (tx / tl) * w
+    fz += (tz / tl) * w
+  }
   const fl = Math.hypot(fx, fz) || 1
   fx /= fl
   fz /= fl

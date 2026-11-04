@@ -5,7 +5,7 @@ import { activeProject, uid, useActiveProject, useWorkspace, type SceneObject, t
 import { viewport } from '@/viewport/bridge'
 import { DARK_THEME, drawPlan, formatLength, type SvgNode } from './draw'
 import { moveEndpoints, moveWall, nearestWall, rectWalls, same, snapPoint, snapToWall } from './edit'
-import { footprint, objectSize } from './footprint'
+import { catalogItemOf, footprint, objectSize } from './footprint'
 import { add, analyse, clampOpening, dist, mul, norm, sub } from './geometry'
 import { tourPath, tourPose } from './tour'
 import { OPENING_DEFAULTS, type Opening, type Vec2 } from './types'
@@ -26,6 +26,10 @@ type Drag =
   | { kind: 'rotate'; id: string }
   | { kind: 'tour'; id: string }
   | { kind: 'room-rect'; start: Vec2 }
+  /** Resizing an opening by one end; the other end (`fixed`, metres along the wall) stays put. */
+  | { kind: 'opening-end'; id: string; fixed: number }
+  /** Resizing a piece by one side; the opposite side stays put. Size and placement at the start. */
+  | { kind: 'resize'; id: string; axis: 0 | 2; sign: 1 | -1; c: Vec2; w: number; d: number; yaw: number }
 
 // SVG attribute names → React prop names (stroke-width → strokeWidth); data-* stay as they are.
 const reactProps = (a: SvgNode['attrs']) => Object.fromEntries(Object.entries(a).map(([k, v]) => [k.startsWith('data-') ? k : k.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()), v]))
@@ -59,6 +63,8 @@ export function PlanEditor() {
   const [chain, setChain] = useState<Vec2[]>([])
   const [rectStart, setRectStart] = useState<Vec2 | null>(null)
   const [placeYaw, setPlaceYaw] = useState(0)
+  /** Live size readout while a resize handle is dragged. */
+  const [sizeLabel, setSizeLabel] = useState<{ at: Vec2; text: string } | null>(null)
   const drag = useRef<Drag | null>(null)
   const fitted = useRef<string | null>(null)
 
@@ -194,6 +200,24 @@ export function PlanEditor() {
     }
 
     // Select tool
+    if (kind === 'opening-end') {
+      const o = project.openings.find((x) => x.id === id)
+      const w = o && project.walls.find((x) => x.id === o.wallId)
+      if (!o || !w) return
+      const L = dist(w.a, w.b)
+      const t = clampOpening(o.t, o.width, L)
+      s.checkpoint('Resize opening')
+      drag.current = { kind: 'opening-end', id, fixed: target!.getAttribute('data-end') === 'a' ? t + o.width / 2 : t - o.width / 2 }
+      return
+    }
+    if (kind === 'resize') {
+      const o = project.objects.find((x) => x.id === id)
+      if (!o) return
+      const fp = footprint(o)
+      s.checkpoint('Resize')
+      drag.current = { kind: 'resize', id, axis: target!.getAttribute('data-axis') === 'x' ? 0 : 2, sign: target!.getAttribute('data-sign') === '1' ? 1 : -1, c: fp.c, w: fp.w, d: fp.d, yaw: fp.yaw }
+      return
+    }
     if (kind === 'endpoint') {
       const at: Vec2 = [Number(target!.getAttribute('data-x')), Number(target!.getAttribute('data-y'))]
       s.checkpoint('Move wall end')
@@ -282,6 +306,55 @@ export function PlanEditor() {
       s.editPlan(null, (pl) => ({ ...pl, openings: pl.openings.map((x) => (x.id === o.id ? { ...x, t } : x)) }))
       return
     }
+    if (d.kind === 'opening-end') {
+      const o = project.openings.find((x) => x.id === d.id)
+      const w = o && project.walls.find((x) => x.id === o.wallId)
+      if (!o || !w) return
+      const L = dist(w.a, w.b)
+      const dir = norm(sub(w.b, w.a))
+      let u = (p[0] - w.a[0]) * dir[0] + (p[1] - w.a[1]) * dir[1]
+      if (!e.shiftKey) u = Math.round(u / grid) * grid
+      // The moving end stays on the wall, at least 30 cm from the fixed one.
+      u = Math.max(0.05, Math.min(L - 0.05, u))
+      const width = Math.max(0.3, Math.min(L - 0.1, Math.abs(u - d.fixed)))
+      const t = clampOpening(d.fixed + (Math.sign(u - d.fixed) || 1) * (width / 2), width, L)
+      s.editPlan(null, (pl) => ({ ...pl, openings: pl.openings.map((x) => (x.id === o.id ? { ...x, width, t } : x)) }))
+      setSizeLabel({ at: add(w.a, mul(dir, t)), text: formatLength(width) })
+      return
+    }
+    if (d.kind === 'resize') {
+      const o = project.objects.find((x) => x.id === d.id)
+      if (!o) return
+      const cos = Math.cos(d.yaw)
+      const sin = Math.sin(d.yaw)
+      const dx = p[0] - d.c[0]
+      const dy = p[1] - d.c[1]
+      // Pointer in the piece's own axes (inverse of footprint's local → plan).
+      const local = d.axis === 0 ? dx * cos - dy * sin : dx * sin + dy * cos
+      const start = d.axis === 0 ? d.w : d.d
+      let size = d.sign * local + start / 2
+      size = e.shiftKey ? Math.round(size * 100) / 100 : Math.round(size / grid) * grid
+      size = Math.max(0.05, Math.min(30, size))
+      const shift = (d.sign * (size - start)) / 2
+      const off: Vec2 = d.axis === 0 ? [shift * cos, -shift * sin] : [shift * sin, shift * cos]
+      const c = add(d.c, off)
+      const t = o.transform
+      const transform = { ...t, position: [c[0], t.position[1], c[1]] as Vec3 }
+      if (o.furniture) {
+        const next = [...o.furniture.size] as Vec3
+        next[d.axis] = size / t.scale[d.axis]
+        s.updateObject(o.id, { furniture: { ...o.furniture, size: next }, transform })
+      } else {
+        const base = o.stats?.size ?? catalogItemOf(o)?.size
+        if (!base || base[d.axis] <= 0) return
+        const scale = [...t.scale] as Vec3
+        scale[d.axis] = size / base[d.axis]
+        s.updateObject(o.id, { transform: { ...transform, scale } })
+      }
+      const fp = footprint(ws().projects.find((x) => x.id === project.id)!.objects.find((x) => x.id === o.id)!)
+      setSizeLabel({ at: fp.c, text: `${formatLength(fp.w)} × ${formatLength(fp.d)}` })
+      return
+    }
     if (d.kind === 'object') {
       const o = project.objects.find((x) => x.id === d.id)
       if (!o) return
@@ -313,6 +386,7 @@ export function PlanEditor() {
   const onPointerUp = (e: RPointerEvent<SVGSVGElement>) => {
     const d = drag.current
     drag.current = null
+    setSizeLabel(null)
     if (d?.kind === 'room-rect') {
       const end = snapPoint(toPlan(e), snapOpts()).p
       const made = rectWalls(d.start, end, thickness, level.id, project.walls, uid)
@@ -357,6 +431,7 @@ export function PlanEditor() {
   const px = (n: number) => n / xf.scale
   const selWall = sel?.kind === 'wall' ? walls.find((w) => w.id === sel.id) : null
   const selObj = selectedId ? objects.find((o) => o.id === selectedId) : null
+  const selOpening = sel?.kind === 'opening' ? openings.find((o) => o.id === sel.id) : null
   const tourPts = project.tour.points.filter((t) => t.levelId === level.id)
   // The tour is drawn while editing it (and the camera marker while it plays).
   const showTour = tool === 'tour'
@@ -428,6 +503,77 @@ export function PlanEditor() {
                 </g>
               )
             })()}
+
+          {/* Selected piece: a handle on each side to resize it (the opposite side stays put). */}
+          {tool === 'select' &&
+            selObj &&
+            !selObj.keys?.length &&
+            (() => {
+              const fp = footprint(selObj)
+              const handles = [
+                { axis: 'x', sign: 1, at: fp.at(fp.w / 2, 0), along: fp.at(fp.w / 2 + 1, 0) },
+                { axis: 'x', sign: -1, at: fp.at(-fp.w / 2, 0), along: fp.at(-fp.w / 2 - 1, 0) },
+                { axis: 'z', sign: 1, at: fp.at(0, fp.d / 2), along: fp.at(0, fp.d / 2 + 1) },
+                { axis: 'z', sign: -1, at: fp.at(0, -fp.d / 2), along: fp.at(0, -fp.d / 2 - 1) },
+              ]
+              const r = px(4.5)
+              return handles.map((h) => {
+                const horizontal = Math.abs(h.along[0] - h.at[0]) > Math.abs(h.along[1] - h.at[1])
+                return (
+                  <rect
+                    key={`${h.axis}${h.sign}`}
+                    x={h.at[0] - r}
+                    y={h.at[1] - r}
+                    width={r * 2}
+                    height={r * 2}
+                    rx={px(1.5)}
+                    fill="#ffffff"
+                    stroke="#4c8dff"
+                    strokeWidth={px(1.5)}
+                    data-kind="resize"
+                    data-id={selObj.id}
+                    data-axis={h.axis}
+                    data-sign={h.sign}
+                    style={{ cursor: horizontal ? 'ew-resize' : 'ns-resize' }}
+                  />
+                )
+              })
+            })()}
+          {/* Selected door or window: drag either end to make it wider or narrower. */}
+          {tool === 'select' &&
+            selOpening &&
+            (() => {
+              const g = geom.walls.get(selOpening.wallId)
+              if (!g) return null
+              const t = clampOpening(selOpening.t, selOpening.width, g.len)
+              const r = px(5)
+              const horizontal = Math.abs(g.d[0]) > Math.abs(g.d[1])
+              return (['a', 'b'] as const).map((end) => {
+                const at = add(g.wall.a, mul(g.d, t + (end === 'a' ? -1 : 1) * (selOpening.width / 2)))
+                return (
+                  <rect
+                    key={end}
+                    x={at[0] - r}
+                    y={at[1] - r}
+                    width={r * 2}
+                    height={r * 2}
+                    rx={px(1.5)}
+                    fill="#ffffff"
+                    stroke="#4c8dff"
+                    strokeWidth={px(1.5)}
+                    data-kind="opening-end"
+                    data-id={selOpening.id}
+                    data-end={end}
+                    style={{ cursor: horizontal ? 'ew-resize' : 'ns-resize' }}
+                  />
+                )
+              })
+            })()}
+          {sizeLabel && (
+            <text x={sizeLabel.at[0]} y={sizeLabel.at[1] - px(14)} fontSize={px(12)} fill="#ffffff" textAnchor="middle" stroke="#141414" strokeWidth={px(3)} paintOrder="stroke" pointerEvents="none">
+              {sizeLabel.text}
+            </text>
+          )}
 
           {/* Tour path, points and where the camera is now. */}
           {showTour && path && path.line.length > 1 && <polyline points={path.line.map((q) => `${q[0]},${q[2]}`).join(' ')} fill="none" stroke="#f5a524" strokeWidth={px(2)} strokeDasharray={`${px(6)} ${px(4)}`} pointerEvents="none" />}

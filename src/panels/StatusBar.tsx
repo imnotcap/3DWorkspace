@@ -8,11 +8,10 @@ const Hint = ({ k, label }: { k: string; label: string }) => (
 )
 
 export function StatusBar() {
-  const settings = useWorkspace((s) => s.settings)
   const selectedId = useWorkspace((s) => s.selectedId)
   const project = useActiveProject()
   const selected = project.objects.find((o) => o.id === selectedId)
-  const backend = `SAM 3D · ${settings.sam3dServer || 'no server set'}`
+  const engine = useWorkspace((s) => (s.settings.engine === 'pathtrace' ? 'Path tracing' : 'Real-time'))
 
   return (
     <div className="flex h-6 shrink-0 items-center gap-5 px-3 text-2xs text-faint">
@@ -22,7 +21,7 @@ export function StatusBar() {
       <Hint k="F" label="Frame" />
       <div className="flex-1" />
       {selected && <span className="text-dim">{selected.name}</span>}
-      <span className="font-mono">{backend}</span>
+      <span className="font-mono">Render · {engine}</span>
     </div>
   )
 }

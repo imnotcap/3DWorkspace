@@ -1,116 +1,14 @@
-import { Diamond, Lock, Unlock } from 'lucide-react'
+import { Lock, Unlock } from 'lucide-react'
 import { objectTransformAt } from '@/lib/anim'
 import { useRef, useState } from 'react'
 import ScrubField from '@/components/reactbits/ScrubField'
-import type { Quality } from '@/generation/types'
 import { actions } from '@/lib/actions'
-import { ancestorIds, scaleForSize, useActiveProject, useWorkspace, type LevelMode, type PropertyTab, type RealSize, type SceneObject, type ShadeMode, type Vec3 } from '@/store/workspace'
+import { ancestorIds, useActiveProject, useWorkspace, type Ambience, type PropertyTab, type RenderEngine, type SceneObject, type ShadeMode, type Vec3 } from '@/store/workspace'
 import { PRIMITIVES, SHAPE_FIELDS, restingHeight } from '@/lib/primitives'
 import { MaterialsSection } from './MaterialsSection'
+import { LIGHT_COLORS, TEMPERATURES, kelvinToHex, lightOf } from '@/furniture/lights'
 import { viewport } from '@/viewport/bridge'
 import { Button, Field, Select, Slider, Toggle, inputCls } from '@/ui/primitives'
-
-function GenerateTab() {
-  const s = useWorkspace((st) => st.settings)
-  const update = useWorkspace((st) => st.updateSettings)
-
-  return (
-    <div className="space-y-2.5 p-3">
-      <Field label="Models">
-        <span className="text-xs text-fg">Meta SAM 3 + SAM 3D Objects</span>
-      </Field>
-      <Field label="Server" hint="Your SAM 3D server: a URL (run worker/sam3d with Docker on an NVIDIA GPU, 32 GB+), or the id of a Hugging Face Space running it.">
-        <input className={inputCls} placeholder="http://localhost:7860 or user/space" value={s.sam3dServer} onChange={(e) => update({ sam3dServer: e.target.value.trim() })} />
-      </Field>
-      <Field label="HF token" hint="Only for a private Hugging Face Space. Stored only in this browser.">
-        <input className={inputCls} type="password" placeholder="hf_…" value={s.hfToken} onChange={(e) => update({ hfToken: e.target.value })} autoComplete="off" />
-      </Field>
-
-      <div className="h-px bg-line" />
-
-      <Field label="Quality" hint={QUALITY_HINT[s.quality]}>
-        <Select<Quality>
-          value={s.quality}
-          onChange={(quality) => update({ quality })}
-          options={[
-            { value: 'draft', label: 'Draft' },
-            { value: 'standard', label: 'Standard' },
-            { value: 'high', label: 'High' },
-            { value: 'ultra', label: 'Ultra · slow' },
-          ]}
-        />
-      </Field>
-      <Field label="Find parts" hint="When you don't name the parts: on = SAM 3 finds them, off = the whole object is one part.">
-        <Toggle checked={s.autoParts} onChange={(autoParts) => update({ autoParts })} />
-      </Field>
-      <Field label="Stand upright" hint={s.level === 'part' ? "By the largest part's own up axis: undoes the camera's tilt." : "By the photo's horizon: use if the photo was taken level."}>
-        <Select<LevelMode>
-          value={s.level}
-          onChange={(level) => update({ level })}
-          options={[
-            { value: 'part', label: 'Main part' },
-            { value: 'camera', label: 'Photo horizon' },
-          ]}
-        />
-      </Field>
-      <Field label="Seed" hint="Empty = random. The same seed and photo give the same parts.">
-        <input
-          className={inputCls}
-          inputMode="numeric"
-          placeholder="Random"
-          value={s.seed ?? ''}
-          onChange={(e) => {
-            const n = parseInt(e.target.value, 10)
-            update({ seed: Number.isFinite(n) && n >= 0 ? n : null })
-          }}
-        />
-      </Field>
-
-      <div className="h-px bg-line" />
-      <KeysSection />
-    </div>
-  )
-}
-
-const QUALITY_HINT: Record<Quality, string> = {
-  draft: 'Fewer sampling steps, no pose refinement. Quick look.',
-  standard: "Meta's default steps, pose refined against the photo's depth. Vertex colours.",
-  high: 'More steps, refined pose, baked 2K texture.',
-  ultra: 'Most steps, refined pose, baked 4K texture, least simplification. Slow.',
-}
-
-/** This site has no keys of its own: every visitor brings theirs, kept in their browser only. */
-function KeysSection() {
-  const s = useWorkspace((st) => st.settings)
-  const update = useWorkspace((st) => st.updateSettings)
-  const forgetKeys = useWorkspace((st) => st.forgetKeys)
-  const hasKeys = !!s.hfToken
-  return (
-    <>
-      <Field
-        label="Your keys"
-        hint={
-          s.rememberKeys
-            ? 'Saved in this browser on this device. Anyone using this browser profile can use them.'
-            : 'Kept in memory only: gone when you close or reload the tab.'
-        }
-      >
-        <label className="flex items-center gap-2 text-xs text-dim">
-          <Toggle checked={s.rememberKeys} onChange={(rememberKeys) => update({ rememberKeys })} />
-          Remember on this device
-        </label>
-      </Field>
-      <p className="ml-[100px] text-2xs leading-snug text-faint">
-        This site has no keys of its own. Your token is sent only to Hugging Face (when the server is a Space), never to this site, and isn't saved with projects or exports.
-      </p>
-      {hasKeys && (
-        <Button variant="ghost" className="ml-[100px] h-6 px-2" onClick={forgetKeys}>
-          Forget my keys
-        </Button>
-      )}
-    </>
-  )
-}
 
 const AXES = ['x', 'y', 'z'] as const
 const AXIS_COLOR = { x: '#e5484d', y: '#46a758', z: '#3e63dd' }
@@ -174,7 +72,6 @@ function ObjectTab() {
   // Keyed objects show (and edit) their value at the current frame; edits auto-key that frame.
   const t = objectTransformAt(obj, frame)
   const keyed = !!obj.keys?.length
-  const onKey = obj.keys?.some((k) => k.frame === frame)
   const set = (patch: Partial<typeof t>) => {
     if (!editing.current) {
       checkpoint('Transform')
@@ -196,21 +93,9 @@ function ObjectTab() {
       <Field label="Name">
         <input className={inputCls} value={obj.name} onChange={(e) => updateObject(obj.id, { name: e.target.value })} />
       </Field>
-      <Field label="Animation" hint={keyed ? 'Moving, rotating or scaling now updates the key at this frame.' : 'Press I to key location, rotation and scale at this frame.'}>
-        <div className="flex items-center gap-1.5">
-          <Button className="h-6 gap-1.5 px-2" onClick={onKey ? actions.deleteKey : actions.insertKey}>
-            <Diamond className={onKey ? 'size-3 fill-warn text-warn' : 'size-3'} />
-            {onKey ? `Remove key · ${frame}` : `Key frame ${frame}`}
-          </Button>
-          {keyed && (
-            <Button variant="ghost" className="h-6 px-2" onClick={() => useWorkspace.getState().setObjectKeys(obj.id, [])}>
-              Clear ({obj.keys!.length})
-            </Button>
-          )}
-        </div>
-      </Field>
       {obj.primitive && <ShapeSection obj={obj} />}
       {obj.furniture && <FurnitureSection obj={obj} />}
+      {lightOf(obj) && <LightSection obj={obj} />}
       <VecField label="Location" value={t.position} step={0.01} min={-1000} max={1000} onChange={(position) => set({ position })} onCommit={done} />
       <VecField
         label="Rotation"
@@ -224,14 +109,7 @@ function ObjectTab() {
       />
       <VecField label="Scale" value={t.scale} step={0.01} min={0.01} max={100} onChange={(scale) => set({ scale })} onCommit={done} />
       {obj.stats?.size && !obj.furniture && (
-        <DimensionsField
-          base={obj.stats.size}
-          scale={t.scale}
-          realSize={project.realSize}
-          onChange={(scale) => set({ scale })}
-          onCommit={done}
-          onApply={() => project.realSize && commit('Real size', obj.id, { transform: { ...t, scale: scaleForSize(obj.stats!.size, project.realSize, t.scale) } })}
-        />
+        <DimensionsField base={obj.stats.size} scale={t.scale} onChange={(scale) => set({ scale })} onCommit={done} />
       )}
       <div className="h-px bg-line" />
       {obj.isGroup ? (
@@ -349,6 +227,12 @@ function GroupSection({ obj, descendants }: { obj: SceneObject; descendants: Sce
   )
 }
 
+const AMBIENCE_HINT: Record<Ambience, string> = {
+  day: 'Bright sky and sun through the windows.',
+  evening: 'Low, warm sun; the lamps start to show.',
+  night: 'Dark outside: only your lamps light the rooms.',
+}
+
 const RES_PRESETS: { id: string; label: string; w: number; h: number }[] = [
   { id: 'uhd', label: '4K UHD · 3840×2160', w: 3840, h: 2160 },
   { id: 'sq4k', label: 'Square 4K · 4096×4096', w: 4096, h: 4096 },
@@ -363,23 +247,9 @@ function RenderTab() {
   const update = useWorkspace((st) => st.updateSettings)
   const cameraView = useWorkspace((st) => st.cameraView)
   const project = useActiveProject()
-  const front = project.images.find((i) => i.view === 'front')
   const preset = RES_PRESETS.find((p) => p.w === s.renderWidth && p.h === s.renderHeight)?.id ?? 'custom'
   const focal = project.camera?.focal ?? 50
   const keyed = project.animation.keys.length > 0
-
-  const matchPhoto = () => {
-    if (!front) return
-    const img = new Image()
-    img.onload = () => {
-      // Photo aspect at 4K on the long edge; H.264 wants even sizes.
-      const scale = 3840 / Math.max(img.naturalWidth, img.naturalHeight)
-      const even = (n: number) => Math.round((n * scale) / 2) * 2
-      update({ renderWidth: even(img.naturalWidth), renderHeight: even(img.naturalHeight), refOpacity: s.refOpacity || 0.4 })
-      useWorkspace.getState().setCameraView(true)
-    }
-    img.src = front.url
-  }
 
   return (
     <div className="space-y-2.5 p-3">
@@ -422,17 +292,47 @@ function RenderTab() {
           Reset to auto framing
         </Button>
       )}
-      {front && (
+      <div className="h-px bg-line" />
+      <Field label="Engine" hint={s.engine === 'pathtrace' ? 'Path tracing, like Cycles: real light bounces, soft shadows, glass and glowing lamps. Rendered view (Z) previews it live.' : 'Real-time rasteriser, like Eevee: fast, less realistic.'}>
+        <Select<RenderEngine>
+          value={s.engine}
+          onChange={(engine) => update({ engine })}
+          options={[
+            { value: 'pathtrace', label: 'Path tracing · Cycles' },
+            { value: 'raster', label: 'Real-time · Eevee' },
+          ]}
+        />
+      </Field>
+      {s.engine === 'pathtrace' && (
         <>
-          <Field label="Reference" hint="Overlay the Front photo in camera view to match its angle.">
-            <Slider value={s.refOpacity} min={0} max={1} onChange={(refOpacity) => update({ refOpacity })} />
+          <Field label="Samples" hint="Per pixel, for images and PDF renders. More = less noise, slower.">
+            <Select value={String(s.samples)} onChange={(v) => update({ samples: Number(v) })} options={[32, 64, 128, 256, 512, 1024, 2048].map((v) => ({ value: String(v), label: String(v) }))} />
           </Field>
-          <Button variant="ghost" className="ml-[100px] h-6 px-2" onClick={matchPhoto}>
-            Match photo aspect
-          </Button>
+          <Field label="Video samples" hint="Per frame of an animation.">
+            <Select value={String(s.videoSamples)} onChange={(v) => update({ videoSamples: Number(v) })} options={[8, 16, 24, 48, 96, 192].map((v) => ({ value: String(v), label: String(v) }))} />
+          </Field>
+          <Field label="Viewport samples" hint="The Rendered view stops refining after this many.">
+            <Select value={String(s.viewportSamples)} onChange={(v) => update({ viewportSamples: Number(v) })} options={[64, 256, 1024, 4096].map((v) => ({ value: String(v), label: String(v) }))} />
+          </Field>
+          <Field label="Bounces">
+            <Select value={String(s.bounces)} onChange={(v) => update({ bounces: Number(v) })} options={[2, 4, 6, 8, 12].map((v) => ({ value: String(v), label: String(v) }))} />
+          </Field>
+          <Field label="Denoise" hint="Smooths the remaining grain.">
+            <Toggle checked={s.denoise} onChange={(denoise) => update({ denoise })} />
+          </Field>
         </>
       )}
-
+      <Field label="Daylight" hint={AMBIENCE_HINT[s.ambience]}>
+        <Select<Ambience>
+          value={s.ambience}
+          onChange={(ambience) => update({ ambience })}
+          options={[
+            { value: 'day', label: 'Day' },
+            { value: 'evening', label: 'Evening' },
+            { value: 'night', label: 'Night' },
+          ]}
+        />
+      </Field>
       <div className="h-px bg-line" />
       <Field label="Exposure">
         <Slider value={s.exposure} min={0.2} max={2.5} onChange={(exposure) => update({ exposure })} />
@@ -441,25 +341,36 @@ function RenderTab() {
         <Slider value={s.envIntensity} min={0} max={3} onChange={(envIntensity) => update({ envIntensity })} />
       </Field>
       <div className="h-px bg-line" />
+      <Field label="PDF photos" hint="Each room render in the PDF is turned into a photograph by OpenAI's image model (ChatGPT images), keeping the room's layout and furniture. Uses your own API key and credits.">
+        <Toggle checked={s.aiPhotos} onChange={(aiPhotos) => update({ aiPhotos })} />
+      </Field>
+      {s.aiPhotos && (
+        <>
+          <Field label="OpenAI key" hint={s.rememberKeys ? 'Saved in this browser on this device.' : 'Kept in memory only: gone when you close the tab.'}>
+            <input className={inputCls} type="password" placeholder="sk-…" value={s.openaiKey} autoComplete="off" onChange={(e) => update({ openaiKey: e.target.value.trim() })} />
+          </Field>
+          <Field label="Model">
+            <input className={inputCls} value={s.aiModel} onChange={(e) => update({ aiModel: e.target.value.trim() })} />
+          </Field>
+          <Field label="Remember key">
+            <Toggle checked={s.rememberKeys} onChange={(rememberKeys) => update({ rememberKeys })} />
+          </Field>
+          <p className="ml-[100px] text-2xs leading-snug text-faint">The key goes only to api.openai.com, from this browser. It is never saved with projects or exports.</p>
+        </>
+      )}
+      <div className="h-px bg-line" />
       <div className="grid grid-cols-2 gap-1.5">
         <Button variant="primary" onClick={actions.renderImage}>
           Image · F12
         </Button>
-        <Button onClick={actions.renderAnimation}>Animation · ⌃F12</Button>
+        <Button onClick={actions.renderAnimation}>Tour video · ⌃F12</Button>
       </div>
     </div>
   )
 }
 
 /** Blender's Dimensions: bounding-box size in cm. Locked = edit one axis, scale all proportionally. */
-function DimensionsField({ base, scale, realSize, onChange, onCommit, onApply }: {
-  base: Vec3
-  scale: Vec3
-  realSize: RealSize | null
-  onChange: (scale: Vec3) => void
-  onCommit: () => void
-  onApply: () => void
-}) {
+function DimensionsField({ base, scale, onChange, onCommit }: { base: Vec3; scale: Vec3; onChange: (scale: Vec3) => void; onCommit: () => void }) {
   const [locked, setLocked] = useState(true)
   const cm = base.map((b, i) => +(b * scale[i] * 100).toFixed(1)) as Vec3
   return (
@@ -489,11 +400,6 @@ function DimensionsField({ base, scale, realSize, onChange, onCommit, onApply }:
         <button type="button" onClick={() => setLocked(!locked)} className="flex items-center gap-1 text-2xs text-dim hover:text-fg">
           {locked ? <Lock className="size-3" /> : <Unlock className="size-3" />} {locked ? 'Proportional' : 'Free'}
         </button>
-        {realSize && (
-          <Button variant="ghost" className="h-6 whitespace-nowrap px-2" onClick={onApply}>
-            Apply real size
-          </Button>
-        )}
       </div>
     </>
   )
@@ -536,6 +442,68 @@ function FurnitureSection({ obj }: { obj: SceneObject }) {
               onCommit={() => (editing.current = false)}
             />
           ))}
+        </div>
+      </Field>
+      <div className="h-px bg-line" />
+    </>
+  )
+}
+
+/** Lamps: the light they give off. Shows live in the 3D view (Rendered view: real light, path traced). */
+function LightSection({ obj }: { obj: SceneObject }) {
+  const light = lightOf(obj)!
+  const { commit, updateObject, checkpoint } = useWorkspace.getState()
+  const editing = useRef(false)
+  const set = (patch: Partial<typeof light>, undoable = true) => {
+    const next = { ...light, ...patch }
+    if (undoable) return commit('Light', obj.id, { light: next })
+    if (!editing.current) {
+      checkpoint('Light')
+      editing.current = true
+    }
+    updateObject(obj.id, { light: next })
+  }
+  const done = () => (editing.current = false)
+  return (
+    <>
+      <Field label="Light" hint="Real light from the bulb. Switch the viewport to Rendered (Z) to see it path traced.">
+        <label className="flex items-center gap-2 text-xs text-dim">
+          <Toggle checked={light.on} onChange={(on) => set({ on })} />
+          {light.on ? 'On' : 'Off'}
+        </label>
+      </Field>
+      <Field label="Temperature">
+        <div className="grid grid-cols-3 gap-1">
+          {TEMPERATURES.map((t) => (
+            <button
+              key={t.kelvin}
+              type="button"
+              title={`${t.kelvin} K`}
+              onClick={() => set({ kelvin: t.kelvin, color: kelvinToHex(t.kelvin) })}
+              className={`flex h-6 items-center gap-1 rounded border px-1 text-2xs ${light.kelvin === t.kelvin ? 'border-accent text-fg' : 'border-line-strong text-dim hover:text-fg'}`}
+            >
+              <span className="size-2.5 shrink-0 rounded-full" style={{ background: kelvinToHex(t.kelvin) }} />
+              <span className="truncate">{t.label}</span>
+            </button>
+          ))}
+        </div>
+      </Field>
+      <Field label="Colour">
+        <div className="space-y-1.5" onPointerUp={done}>
+          <div className="grid grid-cols-8 gap-1">
+            {LIGHT_COLORS.map((c) => (
+              <button key={c} type="button" aria-label={`Light colour ${c}`} onClick={() => set({ color: c, kelvin: null })} className={`aspect-square rounded border ${light.kelvin === null && light.color.toLowerCase() === c ? 'border-accent ring-1 ring-accent' : 'border-white/10'}`} style={{ background: c }} />
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <input type="color" value={light.color} onChange={(e) => set({ color: e.target.value, kelvin: null }, false)} onBlur={done} className="h-6.5 w-9 cursor-pointer rounded-md border border-line-strong bg-transparent p-0.5" aria-label="Custom light colour" />
+            <span className="font-mono text-2xs text-dim">{light.kelvin ? `${light.kelvin} K` : light.color}</span>
+          </div>
+        </div>
+      </Field>
+      <Field label="Brightness" hint={`${Math.round(light.lumens)} lm · a 60 W bulb is about 800 lm.`}>
+        <div onPointerUp={done}>
+          <Slider value={light.lumens} min={50} max={4000} onChange={(lumens) => set({ lumens }, false)} />
         </div>
       </Field>
       <div className="h-px bg-line" />
@@ -612,7 +580,6 @@ function Segmented<T extends string>({ value, onChange, options }: { value: T; o
 }
 
 export function PropertiesPanel({ tab }: { tab: Exclude<PropertyTab, null> }) {
-  if (tab === 'generate') return <GenerateTab />
   if (tab === 'object') return <ObjectTab />
   return <RenderTab />
 }

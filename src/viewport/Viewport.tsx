@@ -27,6 +27,9 @@ import { viewport } from './bridge'
 import { sceneBox, visibleBox } from './camera'
 import { Model, withOriginalMaterials, type Tree } from './Model'
 import { CameraView, RenderBridge, tourActive } from './RenderSystem'
+import { FinalRender } from './Renderer'
+import { daylight } from './sky'
+import { wallSafeTransform } from '@/plan/constrain'
 import { HouseLevel } from './House'
 import { levelElevations } from '@/plan/levels'
 
@@ -38,27 +41,37 @@ const LIGHTING: Record<ShadingMode, { env: number; fill: number; key: number }> 
   wireframe: { env: 0.4, fill: 0.9, key: 1.0 },
   solid: { env: 0.35, fill: 0.9, key: 1.2 },
   material: { env: 0.9, fill: 0, key: 0.4 },
-  rendered: { env: 0.55, fill: 0, key: 2.4 },
+  // Rendered: the sky's own brightness and the sun (see sky.ts).
+  rendered: { env: 1, fill: 0, key: 0 },
 }
 
+/**
+ * Editing modes are lit by a neutral studio (like Blender's Material Preview); Rendered uses the
+ * scene's own light: the sky and sun for the time of day, plus the lamps.
+ */
 function StudioEnvironment() {
   const gl = useThree((s) => s.gl)
   const scene = useThree((s) => s.scene)
   const shading = useWorkspace((s) => s.shading)
+  const ambience = useWorkspace((s) => s.settings.ambience)
+  const rendered = shading === 'rendered'
   const intensity = useWorkspace((s) => s.settings.envIntensity) * LIGHTING[shading].env
   const exposure = useWorkspace((s) => s.settings.exposure)
 
   // Procedural room env: no network fetch, ~1ms to bake.
-  useEffect(() => {
+  const studio = useMemo(() => {
     const pmrem = new PMREMGenerator(gl)
     const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
-    scene.environment = env
-    return () => {
-      scene.environment = null
-      env.dispose()
-      pmrem.dispose()
-    }
-  }, [gl, scene])
+    pmrem.dispose()
+    return env
+  }, [gl])
+  useEffect(() => () => studio.dispose(), [studio])
+
+  useEffect(() => {
+    scene.environment = rendered ? daylight(ambience).sky : studio
+    viewport.invalidate()
+    return () => void (scene.environment = null)
+  }, [scene, rendered, ambience, studio])
 
   useEffect(() => {
     scene.environmentIntensity = intensity
@@ -66,6 +79,32 @@ function StudioEnvironment() {
     viewport.invalidate()
   }, [gl, scene, intensity, exposure])
   return null
+}
+
+/** The sun of the time of day (Rendered), or a studio key light (editing modes). */
+function SunLight() {
+  const shading = useWorkspace((s) => s.shading)
+  const ambience = useWorkspace((s) => s.settings.ambience)
+  const rendered = shading === 'rendered'
+  const day = daylight(ambience)
+  const pos = rendered ? (day.sunDir.toArray().map((v) => v * 24) as Vec3) : ([8, 14, 6] as Vec3)
+  return (
+    <directionalLight
+      position={pos}
+      color={rendered ? day.sunColor : '#ffffff'}
+      intensity={rendered ? day.sunIntensity : LIGHTING[shading].key}
+      castShadow={rendered}
+      shadow-mapSize={[4096, 4096]}
+      shadow-bias={-0.0004}
+      shadow-normalBias={0.02}
+      shadow-radius={3}
+      shadow-camera-left={-20}
+      shadow-camera-right={20}
+      shadow-camera-top={20}
+      shadow-camera-bottom={-20}
+      shadow-camera-far={80}
+    />
+  )
 }
 
 function FloorAxes() {
@@ -136,7 +175,11 @@ function CameraRig() {
     }
   }, [camera, controls, invalidate])
 
-  // Frame the house when the view opens, a project or template loads, or the first walls appear.
+  // Frame the house when the planner opens, the view opens, a project or template loads, or the first walls appear.
+  useEffect(() => {
+    const t = setTimeout(() => viewport.frameAll(), 300)
+    return () => clearTimeout(t)
+  }, [])
   useEffect(() => {
     const later = () => setTimeout(() => viewport.frameAll(), 120)
     return useWorkspace.subscribe((s, prev) => {
@@ -283,6 +326,17 @@ const roots = () => [...viewport.objects.values()].filter((o) => !o.userData.par
 
 const TOOL_LABEL = { translate: 'Move', rotate: 'Rotate', scale: 'Scale' } as const
 
+/** While the gizmo drags a piece, it slides along walls instead of going into them. */
+function keepOutOfWalls(o: Object3D) {
+  const s = useWorkspace.getState()
+  const p = activeProject(s)
+  const obj = p.objects.find((x) => x.id === o.userData.id)
+  if (!obj) return
+  const t = { position: o.position.toArray() as Vec3, rotation: [o.rotation.x, o.rotation.y, o.rotation.z] as Vec3, scale: o.scale.toArray() as Vec3 }
+  const safe = wallSafeTransform(p, obj, t)
+  if (safe !== t) o.position.fromArray(safe.position)
+}
+
 /** Gizmo release → one undoable store update. */
 function commitTransform(o: Object3D, tool: keyof typeof TOOL_LABEL) {
   const id = o.userData.id as string
@@ -294,11 +348,12 @@ function commitTransform(o: Object3D, tool: keyof typeof TOOL_LABEL) {
   else s.commit(TOOL_LABEL[tool], id, { transform })
 }
 
-/** Dark studio while editing; daylight sky when walking through the house. */
+/** Dark studio while editing; the sky of the time of day when walking through the house. */
 function Background() {
   const project = useActiveProject()
   const walking = useWorkspace((s) => s.cameraView) && tourActive(project)
-  return <color attach="background" args={[walking ? '#dfe6ec' : '#141414']} />
+  const ambience = useWorkspace((s) => s.settings.ambience)
+  return <color attach="background" args={[walking ? `#${daylight(ambience).background.getHexString()}` : '#141414']} />
 }
 
 function SceneContent() {
@@ -338,6 +393,7 @@ function SceneContent() {
     return t
   }, [project.objects])
   const rendered = shading === 'rendered'
+  const raster = useWorkspace((s) => s.settings.engine === 'raster')
   const light = LIGHTING[shading]
 
   // Resolve the selected group after it mounts (it may still be suspending on load).
@@ -350,20 +406,10 @@ function SceneContent() {
     <>
       <StudioEnvironment />
       <hemisphereLight args={['#ffffff', '#3a3a3a', light.fill]} />
-      <directionalLight
-        position={[8, 14, 6]}
-        intensity={light.key}
-        castShadow={rendered}
-        shadow-mapSize={[4096, 4096]}
-        shadow-bias={-0.0004}
-        shadow-normalBias={0.02}
-        shadow-camera-left={-20}
-        shadow-camera-right={20}
-        shadow-camera-top={20}
-        shadow-camera-bottom={-20}
-        shadow-camera-far={60}
-      />
 
+      {/* Everything that is part of the picture (the path tracer bakes this; helpers stay out). */}
+      <group name="__world">
+      <SunLight />
       {project.levels.map((level, i) => (
         <group
           key={level.id}
@@ -378,8 +424,9 @@ function SceneContent() {
           ))}
         </group>
       ))}
+      </group>
 
-      {rendered && <ContactShadows position={[0, 0.001, 0]} opacity={0.55} scale={12} blur={2.4} far={4} resolution={512} />}
+      {rendered && raster && <ContactShadows name="__contact" position={[0, 0.001, 0]} opacity={0.55} scale={12} blur={2.4} far={4} resolution={512} />}
 
       <group name="__helpers">
         {showGrid && !walking && (
@@ -401,7 +448,7 @@ function SceneContent() {
           </>
         )}
         {target && tool !== 'select' && (
-          <TransformControls object={target} mode={tool} size={0.8} onChange={() => invalidate()} onMouseUp={() => commitTransform(target, tool)} />
+          <TransformControls object={target} mode={tool} size={0.8} onChange={() => invalidate()} onObjectChange={() => keepOutOfWalls(target)} onMouseUp={() => commitTransform(target, tool)} />
         )}
       </group>
     </>
@@ -415,7 +462,7 @@ export function Viewport() {
     <Canvas
       frameloop="demand"
       dpr={[1, 2]}
-      shadows="percentage"
+      shadows="soft"
       camera={{ position: [4.2, 3, 5.4], fov: 38, near: 0.05, far: 2000 }}
       gl={{ antialias: true, powerPreference: 'high-performance', toneMapping: AgXToneMapping }}
       onPointerDown={(e) => (down.current = { x: e.clientX, y: e.clientY })}
@@ -429,6 +476,7 @@ export function Viewport() {
       <CameraRig />
       <Bridge />
       <RenderBridge />
+      <FinalRender />
       <CameraView />
       <OrbitControls
         makeDefault
@@ -438,7 +486,7 @@ export function Viewport() {
         target={[0, 0.8, 0]}
         mouseButtons={{ LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.ROTATE, RIGHT: MOUSE.PAN }}
       />
-      <GizmoHelper alignment="bottom-right" margin={[64, 64]}>
+      <GizmoHelper alignment="bottom-right" margin={[64, 64]} renderPriority={2}>
         <GizmoViewport axisColors={[AXIS_X, '#46a758', AXIS_Z]} labelColor="#0b0b0b" axisHeadScale={0.95} />
       </GizmoHelper>
     </Canvas>

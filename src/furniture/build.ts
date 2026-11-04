@@ -90,9 +90,9 @@ function special(slot: string): Material | null {
     case 'Mirror':
       return new MeshStandardMaterial({ name: slot, color: '#ffffff', roughness: 0.02, metalness: 1 })
     case 'Glass':
-      return new MeshPhysicalMaterial({ name: slot, color: '#e3eef2', roughness: 0.02, metalness: 0, transparent: true, opacity: 0.22, depthWrite: false, side: DoubleSide })
+      return new MeshPhysicalMaterial({ name: slot, color: '#eef5f7', roughness: 0.02, metalness: 0, transmission: 1, thickness: 0, ior: 1.5, side: DoubleSide })
     case 'Light':
-      return new MeshStandardMaterial({ name: slot, color: '#fff3dc', emissive: '#ffe2b0', emissiveIntensity: 2.2, roughness: 0.4 })
+      return new MeshStandardMaterial({ name: slot, color: '#fff3dc', emissive: '#ffe2b0', emissiveIntensity: 6, roughness: 0.4 })
     case 'Glass top':
       return new MeshStandardMaterial({ name: slot, color: '#0b0b0c', roughness: 0.06, metalness: 0.1 })
     case 'Dark':

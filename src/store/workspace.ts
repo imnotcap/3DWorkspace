@@ -1,11 +1,11 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { GenerateProgress, Quality, ViewTag } from '@/generation/types'
 import type { Level, Opening, OpeningKind, RoomInfo, Tour, Wall } from '@/plan/types'
+import { wallSafeTransform } from '@/plan/constrain'
 
 export type ShadingMode = 'wireframe' | 'solid' | 'material' | 'rendered'
 export type Tool = 'select' | 'translate' | 'rotate' | 'scale'
-export type PropertyTab = 'generate' | 'object' | 'render' | null
+export type PropertyTab = 'object' | 'render' | null
 export type Vec3 = [number, number, number]
 
 export interface MeshStats {
@@ -18,8 +18,16 @@ export interface MeshStats {
   surfaces?: { key: string; color: string }[]
 }
 
-/** Real-world size in metres; any axis may be left out. */
-export type RealSize = { x?: number; y?: number; z?: number }
+/** A light source on a lamp: real light in the scene, on its bulb. */
+export interface LightSettings {
+  on: boolean
+  /** Light colour (from the colour temperature, or any colour). */
+  color: string
+  /** Colour temperature in kelvin it was set from (null = custom colour). */
+  kelvin: number | null
+  /** Luminous flux in lumens (a 60 W bulb ≈ 800 lm). */
+  lumens: number
+}
 
 export interface Transform {
   position: Vec3
@@ -130,68 +138,18 @@ export interface SceneObject {
   keys?: ObjectKey[]
   /** How this object's keys blend (default: smooth). */
   interpolation?: Interpolation
-  /** Scale to this real size once the mesh has loaded (from the project's spec dimensions). */
-  fitSize?: RealSize | null
+  /** Lamps: the light it gives off. */
+  light?: LightSettings
   error?: string
-}
-
-/** One part of the Front photo, as SAM 3 split it (or as you clicked it). */
-export interface Segment {
-  id: string
-  name: string
-  /** Folder name for repeated parts (Leg 1…4 → "Leg"). */
-  group?: string | null
-  color: string
-  /** PNG, white = part, same size as the photo sent to the server. */
-  mask: Blob
-  area: number
-  /** [x0, y0, x1, y1] in photo pixels */
-  bbox: [number, number, number, number]
-  enabled: boolean
-}
-
-export interface Segmentation {
-  /** The Front image these masks belong to. */
-  imageId: string
-  width: number
-  height: number
-  objectLabel: string
-  segments: Segment[]
-  /** What SAM 3 was asked for; if you change it before generating, the parts are found again… */
-  prompt: PartPrompt & { auto: boolean }
-  /** …unless you edited the parts by hand (then your edits are kept). */
-  edited: boolean
-}
-
-/** What to look for in the Front photo. */
-export interface PartPrompt {
-  /** The object, e.g. "office chair". */
-  object: string
-  /** Its parts, comma-separated, e.g. "seat, backrest, armrest, wheel". Empty = find them automatically. */
-  parts: string
-}
-
-export interface InputImage {
-  id: string
-  file: File
-  url: string
-  view: ViewTag
 }
 
 export interface Project {
   id: string
   name: string
   objects: SceneObject[]
-  images: InputImage[]
-  /** null = automatic product framing */
+  /** null = automatic framing */
   camera: CameraPose | null
-  /** Spec-sheet dimensions applied to every mesh generated in this project. */
-  realSize: RealSize | null
-  /** Default render angle (radians), e.g. the Front photo's camera. */
-  autoAngles?: { azimuth: number; polar: number } | null
   animation: Animation
-  prompt: PartPrompt
-  segmentation: Segmentation | null
   // The house
   levels: Level[]
   activeLevelId: string
@@ -215,22 +173,16 @@ export type RenderJob = { kind: 'image' | 'video'; done: number; total: number; 
 
 export type JobState =
   | { status: 'idle' }
-  | ({ status: 'running'; startedAt: number } & GenerateProgress)
+  | { status: 'running'; startedAt: number; message: string; progress?: number }
   | { status: 'error'; message: string; hint?: string }
   | { status: 'done'; message: string }
 
-/** How a SAM 3D model is stood upright: by its main part's own up axis, or by the photo's horizon. */
-export type LevelMode = 'part' | 'camera'
+/** Path tracing (like Cycles) or the real-time rasteriser (like Eevee). */
+export type RenderEngine = 'pathtrace' | 'raster'
+/** Daylight outside: full day, a low warm sun, or night (only the lamps light the rooms). */
+export type Ambience = 'day' | 'evening' | 'night'
 
 export interface Settings {
-  /** Where the SAM 3D server runs: a URL (http://localhost:7860) or a Hugging Face Space id (user/space). */
-  sam3dServer: string
-  hfToken: string
-  quality: Quality
-  seed: number | null
-  level: LevelMode
-  /** With no part names, let SAM 3 find the parts (else the whole object is one part). */
-  autoParts: boolean
   showGrid: boolean
   showStats: boolean
   exposure: number
@@ -238,10 +190,26 @@ export interface Settings {
   renderWidth: number
   renderHeight: number
   transparent: boolean
-  refOpacity: number
   showTimeline: boolean
-  /** Keep API keys in this browser's storage. Off = keys live in memory until the tab closes. */
+  /** OpenAI (ChatGPT) API key for photoreal PDF images. Memory only unless `rememberKeys`. */
+  openaiKey: string
   rememberKeys: boolean
+  /** PDF room images: turn each path-traced render into a photograph with OpenAI's image model. */
+  aiPhotos: boolean
+  aiModel: string
+  /** Final renders (F12, video, PDF): path traced or real-time. */
+  engine: RenderEngine
+  /** Path-tracing samples per pixel for still images (and PDF renders). */
+  samples: number
+  /** Samples per frame for animations. */
+  videoSamples: number
+  /** Most samples the Rendered viewport accumulates before it stops. */
+  viewportSamples: number
+  /** Light bounces. */
+  bounces: number
+  /** Smooth the remaining path-tracing noise. */
+  denoise: boolean
+  ambience: Ambience
   /** Ceilings in the 3D view (renders and the tour always have them). */
   showCeilings: boolean
   /** Show the floors above the active one in 3D. */
@@ -260,7 +228,14 @@ interface Snapshot {
   plan: PlanData
 }
 
+/** The workspaces overview, or one project open in the planner. */
+export type Screen = 'home' | 'editor'
+
 interface WorkspaceState {
+  screen: Screen
+  setScreen: (s: Screen) => void
+  /** Open a project in the planner. */
+  openProject: (id: string) => void
   projects: Project[]
   activeProjectId: string
   selectedId: string | null
@@ -289,7 +264,7 @@ interface WorkspaceState {
   renameProject: (id: string, name: string) => void
   replaceProjects: (projects: Project[], activeId: string) => void
   // objects
-  addObject: (obj: { name: string; blob?: Blob; modelFile?: string; primitive?: Primitive; furniture?: FurnitureSpec; surfaces?: Record<string, MaterialOverride>; levelId?: string; source: string; fitSize?: RealSize | null; exact?: boolean; spec?: unknown; transform?: Transform; material?: MaterialOverride | null }, projectId?: string) => string
+  addObject: (obj: { name: string; blob?: Blob; modelFile?: string; primitive?: Primitive; furniture?: FurnitureSpec; surfaces?: Record<string, MaterialOverride>; light?: LightSettings; levelId?: string; source: string; exact?: boolean; spec?: unknown; transform?: Transform; material?: MaterialOverride | null }, projectId?: string) => string
   /** One undo step: a whole hierarchy (model → groups → parts). `parent` indexes into `nodes`; returns the new ids. */
   addTree: (nodes: TreeNode[], projectId?: string) => string[]
   /** Move an object into another parent (or to the top level with null), keeping it where it is on screen. */
@@ -297,7 +272,6 @@ interface WorkspaceState {
   /** One undo step: remove `id` and add `objects` in its place (Separate into parts). */
   replaceObject: (id: string, objects: Omit<SceneObject, 'id'>[]) => void
   duplicateObject: (id: string) => string | null
-  setAutoAngles: (angles: { azimuth: number; polar: number } | null, projectId?: string) => void
   /** Silent update (stats, live scrubbing). Use `commit` for undoable edits. */
   updateObject: (id: string, patch: Partial<SceneObject>) => void
   /** Undoable update. */
@@ -307,25 +281,14 @@ interface WorkspaceState {
   checkpoint: (label: string) => void
   undo: () => void
   redo: () => void
-  // images
-  addImages: (files: File[]) => void
-  setImageView: (id: string, view: ViewTag) => void
-  removeImage: (id: string) => void
-  clearImages: () => void
-  // segmentation (active project)
-  setPrompt: (patch: Partial<PartPrompt>) => void
-  setSegmentation: (seg: Segmentation | null, projectId?: string) => void
-  updateSegment: (id: string, patch: Partial<Segment>) => void
   // ui
   setShading: (m: ShadingMode) => void
   setTool: (t: Tool) => void
   setPropertyTab: (t: PropertyTab) => void
   setJob: (j: JobState) => void
   updateSettings: (patch: Partial<Settings>) => void
-  forgetKeys: () => void
   // camera + animation (active project)
   setCamera: (pose: CameraPose | null) => void
-  setRealSize: (size: RealSize | null) => void
   setObjectKey: (id: string, frame: number, transform: Transform, label?: string) => void
   removeObjectKey: (id: string, frame: number) => void
   setObjectKeys: (id: string, keys: ObjectKey[]) => void
@@ -358,7 +321,6 @@ const HISTORY_LIMIT = 64
 export const uid = () => Math.random().toString(36).slice(2, 10)
 export const IDENTITY: Transform = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }
 export const DEFAULT_ANIMATION: Animation = { fps: 30, start: 0, end: 120, interpolation: 'ease', keys: [] }
-export const DEFAULT_PROMPT: PartPrompt = { object: '', parts: '' }
 export const DEFAULT_TOUR: Tour = { points: [], speed: 0.7, eyeHeight: 1.6, focal: 20 }
 export const newLevel = (name: string, elevation = 0): Level => ({ id: uid(), name, elevation, height: 2.6, slab: 0.25 })
 function newProject(name: string): Project {
@@ -367,12 +329,8 @@ function newProject(name: string): Project {
     id: uid(),
     name,
     objects: [],
-    images: [],
     camera: null,
-    realSize: null,
     animation: DEFAULT_ANIMATION,
-    prompt: DEFAULT_PROMPT,
-    segmentation: null,
     levels: [ground],
     activeLevelId: ground.id,
     walls: [],
@@ -417,9 +375,19 @@ const patchProject = (s: WorkspaceState, projectId: string, fn: (p: Project) => 
 })
 const patchActive = (s: WorkspaceState, fn: (p: Project) => Project) => patchProject(s, s.activeProjectId, fn)
 
+/** Furniture never ends up inside a wall: whatever moved, resized or loaded it, it is pushed back out. */
+function clear(p: Pick<Project, 'walls' | 'openings' | 'levels'>, o: SceneObject): SceneObject {
+  const transform = wallSafeTransform(p, o)
+  return transform === o.transform ? o : { ...o, transform }
+}
+const MOVES: (keyof SceneObject)[] = ['transform', 'furniture', 'stats']
+
 export const useWorkspace = create<WorkspaceState>()(
   persist(
     (set, get) => ({
+      screen: 'home',
+      setScreen: (screen) => set({ screen }),
+      openProject: (id) => set({ activeProjectId: id, selectedId: null, planSel: null, screen: 'editor', playing: false, cameraView: false }),
       projects: [first],
       activeProjectId: first.id,
       selectedId: null,
@@ -439,12 +407,6 @@ export const useWorkspace = create<WorkspaceState>()(
       placing: null,
       openingKind: 'door',
       settings: {
-        sam3dServer: 'http://localhost:7860',
-        hfToken: '',
-        quality: 'high',
-        seed: null,
-        level: 'part',
-        autoParts: true,
         showGrid: true,
         showStats: true,
         exposure: 1,
@@ -452,9 +414,18 @@ export const useWorkspace = create<WorkspaceState>()(
         renderWidth: 3840,
         renderHeight: 2160,
         transparent: false,
-        refOpacity: 0,
         showTimeline: true,
+        openaiKey: '',
         rememberKeys: false,
+        aiPhotos: false,
+        aiModel: 'gpt-image-1',
+        engine: 'pathtrace',
+        samples: 256,
+        videoSamples: 64,
+        viewportSamples: 1024,
+        bounces: 6,
+        denoise: true,
+        ambience: 'day',
         showCeilings: false,
         showUpperLevels: false,
         grid: 0.05,
@@ -470,7 +441,6 @@ export const useWorkspace = create<WorkspaceState>()(
         set((s) => {
           const closing = s.projects.find((p) => p.id === id)
           closing?.objects.forEach((o) => o.url && URL.revokeObjectURL(o.url))
-          closing?.images.forEach((i) => URL.revokeObjectURL(i.url))
           let projects = s.projects.filter((p) => p.id !== id)
           if (!projects.length) projects = [newProject('Untitled')]
           const idx = s.projects.findIndex((p) => p.id === id)
@@ -493,7 +463,6 @@ export const useWorkspace = create<WorkspaceState>()(
           return { past: [...s.past, { projectId: p.id, label, objects: p.objects, plan: planOf(p) }].slice(-HISTORY_LIMIT), future: [] }
         }),
 
-      setAutoAngles: (autoAngles, projectId) => set((s) => patchProject(s, projectId ?? s.activeProjectId, (p) => ({ ...p, autoAngles }))),
       replaceObject: (id, objects) => {
         get().checkpoint('Separate')
         const ids = objects.map(() => uid())
@@ -573,7 +542,7 @@ export const useWorkspace = create<WorkspaceState>()(
         get().checkpoint(parentId ? 'Move into group' : 'Move out of group')
         set((s) => patchActive(s, (p) => ({ ...p, objects: p.objects.map((o) => (o.id === id ? { ...o, parentId, transform, keys: undefined } : o)) })))
       },
-      addObject: ({ name, blob, modelFile, primitive, furniture, surfaces, levelId, source, fitSize, exact, spec, transform, material }, projectId) => {
+      addObject: ({ name, blob, modelFile, primitive, furniture, surfaces, light, levelId, source, exact, spec, transform, material }, projectId) => {
         const id = uid()
         const target = projectId ?? get().activeProjectId
         if (target === get().activeProjectId) get().checkpoint('Add')
@@ -582,7 +551,7 @@ export const useWorkspace = create<WorkspaceState>()(
             ...p,
             objects: [
               ...p.objects,
-              {
+              clear(p, {
                 id,
                 name: uniqueName(name, p.objects.map((o) => o.name)),
                 blob,
@@ -591,6 +560,7 @@ export const useWorkspace = create<WorkspaceState>()(
                 primitive,
                 furniture,
                 surfaces,
+                light,
                 levelId: levelId ?? p.activeLevelId,
                 source,
                 visible: true,
@@ -599,10 +569,9 @@ export const useWorkspace = create<WorkspaceState>()(
                 // Primitives and furniture already have correct normals; Auto Smooth is for generated meshes.
                 shade: primitive || furniture ? 'original' : 'auto',
                 material: material ?? null,
-                fitSize: fitSize ?? null,
                 exact,
                 spec,
-              },
+              }),
             ],
           })),
           selectedId: target === s.activeProjectId ? id : s.selectedId,
@@ -610,7 +579,12 @@ export const useWorkspace = create<WorkspaceState>()(
         return id
       },
       updateObject: (id, patch) =>
-        set((s) => patchActive(s, (p) => ({ ...p, objects: p.objects.map((o) => (o.id === id ? { ...o, ...patch } : o)) }))),
+        set((s) =>
+          patchActive(s, (p) => ({
+            ...p,
+            objects: p.objects.map((o) => (o.id !== id ? o : MOVES.some((k) => k in patch) ? clear(p, { ...o, ...patch }) : { ...o, ...patch })),
+          })),
+        ),
       commit: (label, id, patch) => {
         get().checkpoint(label)
         get().updateObject(id, patch)
@@ -662,64 +636,13 @@ export const useWorkspace = create<WorkspaceState>()(
           }
         }),
 
-      // First image becomes Front; the rest default to Detail until the user tags them as a side view.
-      addImages: (files) =>
-        set((s) =>
-          patchActive(s, (p) => {
-            let hasFront = p.images.some((i) => i.view === 'front')
-            const added = files
-              .filter((f) => f.type.startsWith('image/'))
-              .map((file) => {
-                const view: ViewTag = hasFront ? 'detail' : 'front'
-                hasFront = true
-                return { id: uid(), file, url: URL.createObjectURL(file), view }
-              })
-            return { ...p, images: [...p.images, ...added] }
-          }),
-        ),
-      // A geometry view can only be held by one image; the previous holder becomes Detail.
-      setImageView: (id, view) =>
-        set((s) =>
-          patchActive(s, (p) => {
-            const images = p.images.map((i) => (i.id === id ? { ...i, view } : view !== 'detail' && i.view === view ? { ...i, view: 'detail' as ViewTag } : i))
-            return { ...p, images, segmentation: keepSegmentation(p.segmentation, images) }
-          }),
-        ),
-      removeImage: (id) =>
-        set((s) =>
-          patchActive(s, (p) => {
-            const img = p.images.find((i) => i.id === id)
-            if (img) URL.revokeObjectURL(img.url)
-            const images = p.images.filter((i) => i.id !== id)
-            return { ...p, images, segmentation: keepSegmentation(p.segmentation, images) }
-          }),
-        ),
-      clearImages: () =>
-        set((s) =>
-          patchActive(s, (p) => {
-            p.images.forEach((i) => URL.revokeObjectURL(i.url))
-            return { ...p, images: [], segmentation: null }
-          }),
-        ),
-
-      setPrompt: (patch) => set((s) => patchActive(s, (p) => ({ ...p, prompt: { ...p.prompt, ...patch } }))),
-      setSegmentation: (segmentation, projectId) => set((s) => patchProject(s, projectId ?? s.activeProjectId, (p) => ({ ...p, segmentation }))),
-      updateSegment: (id, patch) =>
-        set((s) =>
-          patchActive(s, (p) =>
-            p.segmentation ? { ...p, segmentation: { ...p.segmentation, edited: true, segments: p.segmentation.segments.map((g) => (g.id === id ? { ...g, ...patch } : g)) } } : p,
-          ),
-        ),
-
       setShading: (shading) => set({ shading }),
       setTool: (tool) => set({ tool }),
       setPropertyTab: (propertyTab) => set({ propertyTab }),
       setJob: (job) => set({ job }),
       updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
-      forgetKeys: () => set((s) => ({ settings: { ...s.settings, hfToken: '', rememberKeys: false } })),
 
       setCamera: (camera) => set((s) => patchActive(s, (p) => ({ ...p, camera }))),
-      setRealSize: (realSize) => set((s) => patchActive(s, (p) => ({ ...p, realSize }))),
       // Object keys live on the object, so they are part of undo snapshots.
       setObjectKey: (id, frame, transform, label = 'Keyframe') => {
         get().checkpoint(label)
@@ -756,7 +679,14 @@ export const useWorkspace = create<WorkspaceState>()(
 
       editPlan: (label, fn) => {
         if (label) get().checkpoint(label)
-        set((s) => patchActive(s, (p) => ({ ...p, ...fn(planOf(p)) })))
+        set((s) =>
+          patchActive(s, (p) => {
+            const next = { ...p, ...fn(planOf(p)) }
+            // Walls that moved or thickened push the furniture they ran into.
+            if (next.walls === p.walls && next.openings === p.openings && next.levels === p.levels) return next
+            return { ...next, objects: next.objects.map((o) => clear(next, o)) }
+          }),
+        )
       },
       setActiveLevel: (activeLevelId) => set((s) => ({ ...patchActive(s, (p) => ({ ...p, activeLevelId })), planSel: null, selectedId: null })),
       setView: (view) => set({ view }),
@@ -785,7 +715,6 @@ export const useWorkspace = create<WorkspaceState>()(
             tour: t.tour,
             useTour: t.tour.points.length > 1,
             camera: null,
-            autoAngles: null,
             objects: t.objects.map((o) => ({ ...o, id: uid() })),
           })),
           selectedId: null,
@@ -795,7 +724,7 @@ export const useWorkspace = create<WorkspaceState>()(
     }),
     {
       name: 'workspace',
-      version: 5,
+      version: 6,
       migrate: (persisted, version) => {
         const p = persisted as { settings?: Partial<Settings> & Record<string, unknown>; shading?: ShadingMode }
         // v4: keys are memory-only by default. Anyone who already had a saved key keeps it saved.
@@ -804,6 +733,10 @@ export const useWorkspace = create<WorkspaceState>()(
         if (version < 5 && p.settings) {
           for (const k of ['providerId', 'spaceId', 'workerUrl', 'photogrammetryUrl', 'anthropicKey', 'claudeModel', 'claudeSelfCheck', 'removeBackground']) delete p.settings[k]
         }
+        // v6: Photo → 3D (SAM 3D) is gone; its settings are dropped.
+        if (version < 6 && p.settings) {
+          for (const k of ['sam3dServer', 'hfToken', 'quality', 'seed', 'level', 'autoParts', 'refOpacity', 'rememberKeys']) delete p.settings[k]
+        }
         return p as never
       },
       merge: (persisted, current) => {
@@ -811,9 +744,9 @@ export const useWorkspace = create<WorkspaceState>()(
         return { ...current, ...p, settings: { ...current.settings, ...p?.settings } }
       },
       // Preferences only; projects and meshes persist to IndexedDB (lib/persistence.ts).
-      // API keys are written only if the user chose "Remember on this device".
       partialize: (s) => ({
-        settings: s.settings.rememberKeys ? s.settings : { ...s.settings, hfToken: '' },
+        // The OpenAI key is written only if you chose "Remember on this device".
+        settings: s.settings.rememberKeys ? s.settings : { ...s.settings, openaiKey: '' },
         shading: s.shading,
         view: s.view,
       }),
@@ -821,21 +754,7 @@ export const useWorkspace = create<WorkspaceState>()(
   ),
 )
 
-/** Masks stay valid only while their photo is still the Front image. */
-function keepSegmentation(seg: Segmentation | null, images: InputImage[]) {
-  return seg && images.some((i) => i.id === seg.imageId && i.view === 'front') ? seg : null
-}
-
 export const activeProject = (s: Pick<WorkspaceState, 'projects' | 'activeProjectId'>) =>
   s.projects.find((p) => p.id === s.activeProjectId) ?? s.projects[0]
 
 export const useActiveProject = () => useWorkspace(activeProject)
-
-/** Scale that makes a box of `base` size match `target`. Missing axes follow the given ones proportionally. */
-export function scaleForSize(base: Vec3, target: RealSize, current: Vec3): Vec3 {
-  const axes = (['x', 'y', 'z'] as const).map((k, i) => (target[k] && base[i] > 0 ? target[k]! / base[i] : null))
-  const given = axes.filter((v): v is number => v !== null)
-  if (!given.length) return current
-  const mean = given.reduce((a, b) => a + b, 0) / given.length
-  return axes.map((v) => v ?? mean) as Vec3
-}

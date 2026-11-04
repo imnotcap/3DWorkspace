@@ -274,14 +274,11 @@ function TourInspector({ id }: { id: string }) {
 
 export function TourSettings() {
   const project = useActiveProject()
-  const { editPlan, setUseTour } = useWorkspace.getState()
+  const { editPlan } = useWorkspace.getState()
   const t = project.tour
   const set = (patch: Partial<typeof t>) => editPlan(null, (p) => ({ ...p, tour: { ...p.tour, ...patch } }))
   return (
     <>
-      <Field label="Camera" hint={project.useTour ? 'The render camera walks the tour (Space plays it, Ctrl+F12 renders the video).' : 'Off: the camera uses its own keyframes.'}>
-        <Select value={project.useTour ? 'tour' : 'keys'} onChange={(v) => setUseTour(v === 'tour')} options={[{ value: 'tour', label: 'Follows the tour' }, { value: 'keys', label: 'Keyframes' }]} />
-      </Field>
       <Field label="Speed">
         <Select value={String(t.speed)} onChange={(v) => set({ speed: Number(v) })} options={[0.4, 0.55, 0.7, 0.9, 1.2].map((v) => ({ value: String(v), label: `${v} m/s${v === 0.7 ? ' · walk' : v < 0.6 ? ' · slow' : ''}` }))} />
       </Field>

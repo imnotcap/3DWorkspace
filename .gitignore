@@ -11,4 +11,6 @@ __pycache__/
 public/textures/
 
 # Downloaded at build time by scripts/fetch-models.mjs
-public/models/
+public/models/*
+# Our own models are committed (not downloaded).
+!public/models/own/

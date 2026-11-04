@@ -1,6 +1,7 @@
 import { itemById, type CatalogItem } from '@/furniture/catalog'
 import { presetById } from '@/viewport/materialPresets'
 import { activeProject, useWorkspace, type MaterialOverride, type Vec3 } from '@/store/workspace'
+import { newLight } from '@/furniture/lights'
 import type { Vec2 } from './types'
 
 /** Catalog slot defaults → per-surface material overrides the Object panel can edit. */
@@ -30,6 +31,7 @@ export function placeItem(item: CatalogItem, c: Vec2, yaw: number) {
     furniture: item.kind === 'parametric' ? { item: item.id, size } : undefined,
     modelFile: item.kind === 'model' ? item.model!.file : undefined,
     surfaces: slotOverrides(item),
+    light: item.light ? newLight(item.light.lumens, item.light.kelvin) : undefined,
     exact: true,
     transform: { position: [c[0], y, c[1]], rotation: [0, yaw, 0], scale: [1, 1, 1] },
   })

@@ -32,6 +32,26 @@ function Footprint({ item }: { item: CatalogItem }) {
   )
 }
 
+/** A rendered picture of the piece (made in the background); its outline until it's ready. */
+function Preview({ item }: { item: CatalogItem }) {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    let live = true
+    void import('@/viewport/thumbnails')
+      .then((m) => m.thumbnail(item))
+      .then((u) => live && setUrl(u))
+      .catch(() => {})
+    return () => void (live = false)
+  }, [item])
+  if (!url)
+    return (
+      <span className="grid h-20 w-full place-items-center text-dim group-hover:text-fg">
+        <Footprint item={item} />
+      </span>
+    )
+  return <img src={url} alt="" draggable={false} className="h-20 w-full object-contain transition-transform duration-200 group-hover:scale-105" />
+}
+
 export function Catalog() {
   const [cat, setCat] = useState<Category | 'All'>('All')
   const [q, setQ] = useState('')
@@ -43,7 +63,7 @@ export function Catalog() {
 
   const items = useMemo(
     () =>
-      CATALOG.filter((i) => (cat === 'All' || i.category === cat) && i.name.toLowerCase().includes(q.trim().toLowerCase()) && (i.kind === 'parametric' || !files || files.has(i.model!.file))),
+      CATALOG.filter((i) => (cat === 'All' || i.category === cat) && i.name.toLowerCase().includes(q.trim().toLowerCase()) && (i.kind === 'parametric' || i.model!.file.startsWith('own/') || !files || files.has(i.model!.file))),
     [cat, q, files],
   )
 
@@ -82,9 +102,7 @@ export function Catalog() {
                 <Sparkles className="size-2.5" /> Photoreal
               </span>
             )}
-            <span className="text-dim group-hover:text-fg">
-              <Footprint item={i} />
-            </span>
+            <Preview item={i} />
             <span className="w-full truncate text-center text-xs text-fg">{i.name}</span>
             <span className="font-mono text-[9.5px] text-faint">
               {i.size.map((v) => Math.round(v * 100)).join(' × ')} cm

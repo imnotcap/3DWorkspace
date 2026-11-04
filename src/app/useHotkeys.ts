@@ -23,7 +23,6 @@ export function useHotkeys() {
       if (e.shiftKey && key === 'n') return s.addProject()
       if (e.shiftKey && key === 'd') return e.preventDefault(), actions.duplicateSelected()
 
-      if (e.altKey && key === 'i') return e.preventDefault(), actions.deleteKey()
       if (e.shiftKey && key === 'arrowleft') return actions.jump('start')
       if (e.shiftKey && key === 'arrowright') return actions.jump('end')
 
@@ -36,9 +35,6 @@ export function useHotkeys() {
         case 't': return s.setPlanTool('tour')
         case ' ': return e.preventDefault(), actions.togglePlay()
         case '0': return actions.toggleCameraView()
-        case 'i': return actions.insertKey()
-        case 'arrowleft': return actions.stepFrame(-1)
-        case 'arrowright': return actions.stepFrame(1)
         case 'q': return s.setTool('select')
         case 'g': return s.setTool('translate')
         case 'r': return s.setTool('rotate')
