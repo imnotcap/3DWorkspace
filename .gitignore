@@ -14,3 +14,6 @@ public/textures/
 public/models/*
 # Our own models are committed (not downloaded).
 !public/models/own/
+
+# Copied from node_modules by vite.config.ts (OCR for plan import)
+public/ocr/

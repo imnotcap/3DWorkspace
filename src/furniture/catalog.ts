@@ -1,8 +1,8 @@
 // Furniture catalog (three.js-free, so panels can list it without loading 3D code).
 import type { Vec3 } from '@/store/workspace'
 
-export type Category = 'Living' | 'Dining' | 'Kitchen' | 'Bedroom' | 'Bathroom' | 'Office' | 'Lighting' | 'Decor' | 'Structure'
-export const CATEGORIES: Category[] = ['Living', 'Dining', 'Kitchen', 'Bedroom', 'Bathroom', 'Office', 'Lighting', 'Decor', 'Structure']
+export type Category = 'Living' | 'Dining' | 'Kitchen' | 'Bedroom' | 'Bathroom' | 'Office' | 'Lighting' | 'Decor' | 'Electrical' | 'Structure'
+export const CATEGORIES: Category[] = ['Living', 'Dining', 'Kitchen', 'Bedroom', 'Bathroom', 'Office', 'Lighting', 'Decor', 'Electrical', 'Structure']
 
 /** Default finish per material slot of a piece: a library preset and/or a colour. */
 export type SlotDefaults = Record<string, { color: string; preset?: string }>
@@ -108,6 +108,14 @@ export const CATALOG: CatalogItem[] = [
   { id: 'vase', name: 'Vase with flowers', category: 'Decor', size: [0.22, 0.2, 0.14], kind: 'model', mount: 'floor', model: { file: 'GlassVaseFlowers.glb', credit: 'Eric Chadwick, Rico Cilliers · Khronos glTF Sample Assets', license: 'CC0' } },
   { id: 'wall-art', name: 'Framed print', category: 'Decor', size: [0.9, 0.6, 0.03], kind: 'parametric', mount: 'wall', y: 1.35, slots: { Frame: W('#1c1c1c', 'powder-black') } },
   { id: 'curtains', name: 'Curtains', category: 'Decor', size: [1.8, 2.5, 0.12], kind: 'parametric', mount: 'wall', y: 0, slots: { Fabric: W('#e8e2d6', 'linen'), Rod: BLACK_METAL } },
+
+  // Electrical: wall plates (centre heights as usually fitted: sockets 30 cm, switches 105 cm), radiators.
+  { id: 'socket', name: 'Socket', category: 'Electrical', size: [0.085, 0.085, 0.012], kind: 'parametric', mount: 'wall', y: 0.2575, slots: { Plate: W('#f6f5f2', 'matte-white') }, note: 'Centre 30 cm above the floor' },
+  { id: 'double-socket', name: 'Double socket', category: 'Electrical', size: [0.155, 0.085, 0.012], kind: 'parametric', mount: 'wall', y: 0.2575, slots: { Plate: W('#f6f5f2', 'matte-white') }, note: 'Centre 30 cm above the floor' },
+  { id: 'switch', name: 'Light switch', category: 'Electrical', size: [0.085, 0.085, 0.011], kind: 'parametric', mount: 'wall', y: 1.0075, slots: { Plate: W('#f6f5f2', 'matte-white') }, note: 'Centre 105 cm, by the door handle' },
+  { id: 'double-switch', name: 'Double switch', category: 'Electrical', size: [0.085, 0.085, 0.011], kind: 'parametric', mount: 'wall', y: 1.0075, slots: { Plate: W('#f6f5f2', 'matte-white') } },
+  { id: 'data-socket', name: 'TV / data socket', category: 'Electrical', size: [0.085, 0.085, 0.012], kind: 'parametric', mount: 'wall', y: 0.2575, slots: { Plate: W('#f6f5f2', 'matte-white') } },
+  { id: 'radiator', name: 'Panel radiator', category: 'Electrical', size: [1.0, 0.6, 0.1], kind: 'parametric', mount: 'wall', y: 0.15, slots: { Body: W('#f4f3f0', 'matte-white'), Valve: CHROME }, note: 'Wall panels are built around it' },
 
   // Structure
   { id: 'stairs', name: 'Straight stairs', category: 'Structure', size: [1.0, 2.85, 3.6], kind: 'parametric', mount: 'floor', slots: { Treads: OAK, Structure: WHITE, Rail: BLACK_METAL }, note: 'Cuts the floor above' },

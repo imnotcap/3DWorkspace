@@ -198,7 +198,32 @@ export interface LevelBuildInput {
   floorHoles?: Vec2[][]
   /** Openings in this level's ceiling (stairs going up). */
   ceilingHoles?: Vec2[][]
+  /** Radiators and the like against the walls: wall panels go around them. Plan centre, size, yaw, height range. */
+  obstacles?: { c: Vec2; w: number; d: number; yaw: number; y0: number; y1: number }[]
   onUpgrade?: () => void
+}
+
+/** An opening as the panelling sees it: with the door casing (7 cm) or the window board around it. */
+export function trimHole(o: Opening) {
+  const c = OPENING_DEFAULTS[o.kind].door ? 0.07 : o.sill > 0.05 ? 0.03 : 0
+  return { a: o.t - o.width / 2 - c, b: o.t + o.width / 2 + c, sill: o.sill - (c && o.sill > 0.05 ? 0.03 : 0), top: o.sill + o.height + c }
+}
+
+/** Obstacles standing with their back against one face of a straight wall, in its run coordinates. */
+export function obstaclesOn(g: WallGeom, side: 'left' | 'right', list: LevelBuildInput['obstacles'] = []) {
+  const sgn = side === 'left' ? 1 : -1
+  const out: { a: number; b: number; sill: number; top: number }[] = []
+  for (const o of list) {
+    const rel: Vec2 = [o.c[0] - g.wall.a[0], o.c[1] - g.wall.a[1]]
+    const s = rel[0] * g.d[0] + rel[1] * g.d[1]
+    const off = (rel[0] * g.n[0] + rel[1] * g.n[1]) * sgn
+    // Facing away from this face (front = (sin yaw, cos yaw)), back within a few cm of it.
+    const front: Vec2 = [Math.sin(o.yaw), Math.cos(o.yaw)]
+    const facing = (front[0] * g.n[0] + front[1] * g.n[1]) * sgn
+    if (facing < 0.9 || Math.abs(off - g.h - o.d / 2) > 0.12 || s < -o.w / 2 || s > g.len + o.w / 2) continue
+    out.push({ a: s - o.w / 2 - 0.05, b: s + o.w / 2 + 0.05, sill: o.y0 - 0.05, top: o.y1 + 0.05 })
+  }
+  return out
 }
 
 export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGeom } {
@@ -251,7 +276,7 @@ export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGe
         if (trim.panels === 'none' && trim.skirting === 'none') continue
         const run: [number, number] = w.parentId ? [g.h, fullLen - g.h] : [sg.u0, sg.u1]
         const piece: [number, number] = w.parentId ? [s0 + sg.u0 / k, s0 + sg.u1 / k] : [sg.u0, sg.u1]
-        const geos = trimGeometry({ g, side, trim, ceiling: top, run, piece, s0: w.parentId ? s0 : 0, k, openings: placed.map((o) => ({ a: o.t - o.width / 2, b: o.t + o.width / 2, sill: o.sill, top: o.sill + o.height })) })
+        const geos = trimGeometry({ g, side, trim, ceiling: top, run, piece, s0: w.parentId ? s0 : 0, k, openings: placed.map(trimHole), obstacles: w.parentId ? [] : obstaclesOn(g, side, input.obstacles) })
         if (!geos.length) continue
         const key = `${sg.face}|${trim.color}`
         const e = trims.get(key) ?? { geos: [], color: trim.color, face: sg.face }

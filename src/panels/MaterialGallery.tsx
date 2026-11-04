@@ -48,3 +48,69 @@ export function MaterialGallery({ ids, value, onPick, shape = 'ball', columns = 
     </div>
   )
 }
+
+const lin = (v: number) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)
+const srgb = (v: number) => (v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055)
+const hexLin = (hex: string) => [1, 3, 5].map((i) => lin(parseInt(hex.slice(i, i + 2), 16) / 255))
+
+/** A flat piece of the material's colour map (about 1.2 m of it): photographed, or the drawn one. */
+async function flatSample(preset: MaterialPreset): Promise<string | null> {
+  if (preset.floor) return (await import('@/viewport/thumbnails')).materialThumb(preset.id, 'tile')
+  const set = await (await import('@/viewport/pbrTextures')).pbrSet(preset.id).catch(() => null)
+  let img = set?.map?.image as CanvasImageSource & { width: number; height: number } | undefined
+  let part = set ? Math.min(1, 1.2 / set.tile) : 1
+  if (!img && preset.texture) {
+    img = (await import('@/viewport/detailTextures')).detailTexture(preset.texture).image as HTMLCanvasElement
+    part = 1
+  }
+  if (!img) return null
+  const c = document.createElement('canvas')
+  c.width = 384
+  c.height = 128
+  c.getContext('2d')!.drawImage(img, 0, 0, img.width * part, (img.height * part) / 3, 0, 0, 384, 128)
+  return c.toDataURL('image/jpeg', 0.9)
+}
+
+/** The preview recoloured the way the 3D view does it: × (colour ÷ the texture's mean colour). */
+async function tinted(url: string, color: string, own: string) {
+  if (color.toLowerCase() === own.toLowerCase()) return url
+  const img = new Image()
+  img.src = url
+  await img.decode()
+  const c = document.createElement('canvas')
+  c.width = img.naturalWidth
+  c.height = img.naturalHeight
+  const g = c.getContext('2d')!
+  g.drawImage(img, 0, 0)
+  const d = g.getImageData(0, 0, c.width, c.height)
+  const avg = [0, 0, 0]
+  for (let i = 0; i < d.data.length; i += 4) for (let k = 0; k < 3; k++) avg[k] += lin(d.data[i + k] / 255)
+  const n = d.data.length / 4
+  const t = hexLin(color)
+  const f = t.map((v, k) => Math.min(8, v / Math.max(1e-3, avg[k] / n)))
+  for (let i = 0; i < d.data.length; i += 4) for (let k = 0; k < 3; k++) d.data[i + k] = Math.round(255 * srgb(Math.min(1, lin(d.data[i + k] / 255) * f[k])))
+  g.putImageData(d, 0, 0)
+  return c.toDataURL('image/jpeg', 0.9)
+}
+
+/** A wide look at the chosen material in the chosen colour, as it will be in the room. */
+export function FinishPreview({ presetId, color }: { presetId: string; color: string }) {
+  const preset = presetById(presetId)
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (!preset) return
+    let live = true
+    void flatSample(preset)
+      .then((u) => (u ? tinted(u, color, preset.color) : null))
+      .then((u) => live && setUrl(u))
+      .catch(() => {})
+    return () => void (live = false)
+  }, [preset, color])
+  if (!preset) return null
+  return (
+    <div className="relative h-16 overflow-hidden rounded-md border border-line-strong" style={{ background: color }} title="How the floor looks in this colour">
+      {url && <img src={url} alt="" draggable={false} className="size-full object-cover" />}
+      <span className="absolute bottom-1 left-1.5 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white/90 backdrop-blur-sm">{preset.name}</span>
+    </div>
+  )
+}

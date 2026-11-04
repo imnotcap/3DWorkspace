@@ -9,7 +9,7 @@ import { DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, DEFAULT_TRIM, DEFAULT_WAL
 import { uid, useActiveProject, useWorkspace, type PlanData } from '@/store/workspace'
 import { Button, Field, Select, inputCls } from '@/ui/primitives'
 import { MATERIAL_LIBRARY, PAINT_COLORS, presetById } from '@/viewport/materialPresets'
-import { MaterialGallery } from './MaterialGallery'
+import { FinishPreview, MaterialGallery } from './MaterialGallery'
 import { PropertiesPanel } from './Properties'
 
 /** Right-hand panel: whatever is selected in the plan or the 3D view. */
@@ -80,6 +80,7 @@ function FinishPicker({ value, onChange, materials, groups }: { value: Finish; o
           ))}
         </div>
       )}
+      {value.preset && <FinishPreview presetId={value.preset} color={value.color} />}
       {ids.length > 0 && <MaterialGallery ids={ids} value={value.preset} shape="tile" onPick={(p) => onChange({ color: p.color, preset: p.id })} />}
       <div className="grid grid-cols-9 gap-1">
         {PAINT_COLORS.map((c) => (
@@ -88,7 +89,7 @@ function FinishPicker({ value, onChange, materials, groups }: { value: Finish; o
             type="button"
             title={c.name}
             aria-label={c.name}
-            onClick={() => onChange({ color: c.hex, preset: value.preset && materials.includes(value.preset) ? value.preset : undefined })}
+            onClick={() => onChange({ color: c.hex, preset: value.preset })}
             className={cn('aspect-square rounded border', value.color.toLowerCase() === c.hex ? 'border-white ring-1 ring-accent' : 'border-black/30')}
             style={{ background: c.hex }}
           />
@@ -97,8 +98,21 @@ function FinishPicker({ value, onChange, materials, groups }: { value: Finish; o
       <div className="flex items-center gap-1.5">
         <input type="color" value={value.color} onChange={(e) => onChange({ ...value, color: e.target.value })} className="h-6 w-8 cursor-pointer rounded border border-line-strong bg-transparent" />
         <span className="font-mono text-2xs text-dim">{value.color}</span>
-        {value.preset && <span className="text-2xs text-faint">· {presetById(value.preset)?.name}</span>}
+        {value.preset && <span className="min-w-0 truncate text-2xs text-faint">· {presetById(value.preset)?.name}</span>}
+        <span className="ml-auto flex shrink-0 gap-2">
+          {value.preset && value.color.toLowerCase() !== presetById(value.preset)?.color.toLowerCase() && (
+            <button type="button" onClick={() => onChange({ color: presetById(value.preset!)!.color, preset: value.preset })} className="text-2xs text-accent hover:underline" title="The material's own colours">
+              Original colour
+            </button>
+          )}
+          {value.preset && !groups && (
+            <button type="button" onClick={() => onChange({ color: value.color })} className="text-2xs text-dim hover:text-fg" title="Remove the material, keep the colour">
+              Plain paint
+            </button>
+          )}
+        </span>
       </div>
+      {value.preset && <p className="text-2xs leading-snug text-faint">A colour recolours the material and keeps its texture.</p>}
     </div>
   )
 }
@@ -237,12 +251,12 @@ function RoomInspector({ levelId, at }: { levelId: string; at: Vec2 }) {
     <div className="space-y-2.5 p-3">
       <Title>Room</Title>
       <Field label="Name">
-        <input className={inputCls} list="room-names" value={info?.name ?? 'Room'} onChange={(e) => update('Rename room', true, { name: e.target.value })} />
-        <datalist id="room-names">
-          {ROOM_NAMES.map((n) => (
-            <option key={n} value={n} />
-          ))}
-        </datalist>
+        <div className="flex gap-1">
+          <input className={inputCls} value={info?.name ?? 'Room'} onChange={(e) => update('Rename room', true, { name: e.target.value })} />
+          <div className="w-7 shrink-0">
+            <Select aria-label="Room names" className="justify-center px-0 [&>span]:hidden" value={(info?.name ?? '') as string} onChange={(name) => update('Rename room', true, { name })} options={ROOM_NAMES.map((n) => ({ value: n, label: n }))} />
+          </div>
+        </div>
       </Field>
       <Field label="Floor area">
         <span className="font-mono text-xs text-fg">{face.area.toFixed(2)} m²</span>
@@ -259,9 +273,46 @@ function RoomInspector({ levelId, at }: { levelId: string; at: Vec2 }) {
         <FinishPicker value={info?.walls ?? DEFAULT_WALL_FINISH} materials={WALL_MATERIALS} onChange={(walls) => update('Paint walls', true, { walls })} />
       </div>
       <TrimSection trim={info?.trim ?? DEFAULT_TRIM} onChange={(trim, first) => update('Wall panels', first, { trim })} />
+      <ElectricalSection levelId={levelId} face={face.index} polygon={face.polygon} info={info} />
       <div className="space-y-1.5 border-t border-line pt-2">
         <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Ceiling</span>
         <FinishPicker value={info?.ceiling ?? DEFAULT_CEILING_FINISH} materials={[]} onChange={(ceiling) => update('Ceiling', true, { ceiling })} />
+      </div>
+    </div>
+  )
+}
+
+/** Sockets and switches in the room: placed in one go, by the usual rules, or cleared. */
+function ElectricalSection({ levelId, face, polygon, info }: { levelId: string; face: number; polygon: Vec2[]; info?: RoomInfo }) {
+  const project = useActiveProject()
+  const first = project.levels[0].id
+  const here = project.objects.filter((o) => (o.levelId ?? first) === levelId && !!o.furniture && ['socket', 'double-socket', 'switch', 'double-switch', 'data-socket'].includes(o.furniture.item) && pointInPolygon([o.transform.position[0], o.transform.position[2]], polygon))
+  const place = async () => {
+    const { electricalFor } = await import('@/plan/electrical')
+    const level = project.levels.find((l) => l.id === levelId)!
+    const geom = analyse(project.walls.filter((w) => w.levelId === levelId))
+    const objects = project.objects.filter((o) => (o.levelId ?? first) === levelId)
+    const add = electricalFor({ geom, face, info, level, openings: project.openings, objects })
+    useWorkspace.getState().swapObjects('Place sockets', here.map((o) => o.id), add)
+  }
+  const sockets = here.filter((o) => o.furniture!.item.includes('socket')).length
+  const switches = here.length - sockets
+  return (
+    <div className="space-y-1.5 border-t border-line pt-2">
+      <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Sockets & switches</span>
+      <p className="text-2xs leading-snug text-faint">
+        {here.length ? `${sockets} socket${sockets === 1 ? '' : 's'}, ${switches} switch${switches === 1 ? '' : 'es'} in this room. ` : ''}
+        A double socket 30 cm up on each wall (one more per 3.6 m on long walls), clear of doors, windows and radiators, centred in panel fields; a switch by each door on the handle side at 105 cm. Single ones are in the catalog under Electrical.
+      </p>
+      <div className="flex gap-1.5">
+        <Button className="flex-1" onClick={() => void place()}>
+          {here.length ? 'Place again' : 'Place sockets & switches'}
+        </Button>
+        {here.length > 0 && (
+          <Button variant="ghost" onClick={() => useWorkspace.getState().swapObjects('Remove sockets', here.map((o) => o.id), [])}>
+            Remove
+          </Button>
+        )}
       </div>
     </div>
   )
@@ -274,8 +325,23 @@ function PanelIcon({ style }: { style: PanelStyle }) {
   return (
     <svg viewBox="0 0 60 44" className="h-9 w-full">
       <line x1={0} y1={42} x2={60} y2={42} {...st} strokeWidth={2.4} />
-      {style !== 'none' && style !== 'tall-frames' && <line x1={0} y1={18} x2={60} y2={18} {...st} strokeWidth={2} />}
+      {style !== 'none' && style !== 'tall-frames' && style !== 'full-height' && <line x1={0} y1={18} x2={60} y2={18} {...st} strokeWidth={2} />}
       {style === 'frames' && panels(22, 38)}
+      {style === 'two-tier' && (
+        <>
+          {[3, 33].map((x) => <rect key={x} x={x} y={33} width={24} height={6} rx={0.5} {...st} />)}
+          <line x1={0} y1={30.5} x2={60} y2={30.5} {...st} strokeWidth={1} />
+          {panels(21, 28)}
+        </>
+      )}
+      {style === 'full-height' && (
+        <>
+          <line x1={0} y1={2} x2={60} y2={2} {...st} strokeWidth={2} />
+          {panels(5, 29)}
+          {panels(32, 39)}
+        </>
+      )}
+      {style === 'board-batten' && [1, 13, 25, 37, 49, 59].map((x) => <rect key={x} x={x - 1.2} y={19} width={2.4} height={22} fill="currentColor" opacity={0.6} />)}
       {style === 'tall-frames' && (
         <>
           <line x1={0} y1={26} x2={60} y2={26} {...st} strokeWidth={2} />
@@ -287,6 +353,7 @@ function PanelIcon({ style }: { style: PanelStyle }) {
         <>
           {panels(22, 38)}
           {[6, 26, 46].map((x) => <rect key={x} x={x} y={25} width={8} height={10} fill="currentColor" opacity={0.25} />)}
+          {[8, 28, 48].map((x) => <rect key={x} x={x} y={27} width={4} height={6} fill="currentColor" opacity={0.35} />)}
         </>
       )}
       {style === 'shaker' && [1, 21, 41, 59].map((x) => <rect key={x} x={x - 1} y={20} width={2.5} height={21} fill="currentColor" opacity={0.6} />)}
@@ -299,15 +366,20 @@ function PanelIcon({ style }: { style: PanelStyle }) {
 const PANEL_STYLES: { id: PanelStyle; label: string }[] = [
   { id: 'none', label: 'None' },
   { id: 'frames', label: 'Frames' },
-  { id: 'tall-frames', label: 'Full height' },
-  { id: 'raised', label: 'Raised panels' },
+  { id: 'two-tier', label: 'Two-tier' },
+  { id: 'tall-frames', label: 'Upper frames' },
+  { id: 'full-height', label: 'Full height' },
+  { id: 'raised', label: 'Fielded' },
   { id: 'shaker', label: 'Shaker' },
+  { id: 'board-batten', label: 'Board & batten' },
   { id: 'beadboard', label: 'Beadboard' },
 ]
 const SKIRT_STYLES: { id: SkirtStyle; label: string }[] = [
   { id: 'none', label: 'None' },
   { id: 'flat', label: 'Flat' },
+  { id: 'shadow', label: 'Shadow' },
   { id: 'classic', label: 'Classic' },
+  { id: 'ogee', label: 'Ogee' },
   { id: 'tall', label: 'Tall' },
 ]
 
@@ -325,11 +397,11 @@ function TrimSection({ trim, onChange }: { trim: RoomTrim; onChange: (t: RoomTri
           </button>
         ))}
       </div>
-      {trim.panels !== 'none' && <Cm label="Panel height" value={trim.panelHeight} min={0.5} max={2.2} onChange={(v, f) => set({ panelHeight: v }, f)} />}
+      {trim.panels !== 'none' && trim.panels !== 'full-height' && <Cm label="Panel height" value={trim.panelHeight} min={0.5} max={2.2} onChange={(v, f) => set({ panelHeight: v }, f)} />}
       <Field label="Skirting">
-        <div className="grid grid-cols-4 gap-0.5 rounded-md border border-line-strong bg-app/60 p-0.5">
+        <div className="grid grid-cols-3 gap-0.5 rounded-md border border-line-strong bg-app/60 p-0.5">
           {SKIRT_STYLES.map((k) => (
-            <button key={k.id} type="button" onClick={() => set({ skirting: k.id, skirtHeight: k.id === 'tall' ? Math.max(trim.skirtHeight, 0.15) : k.id === 'flat' && trim.skirtHeight > 0.12 ? 0.08 : trim.skirtHeight })} className={cn('h-5.5 rounded text-2xs transition-colors', trim.skirting === k.id ? 'bg-active text-fg' : 'text-dim hover:text-fg')}>
+            <button key={k.id} type="button" onClick={() => set({ skirting: k.id, skirtHeight: k.id === 'tall' || k.id === 'ogee' ? Math.max(trim.skirtHeight, k.id === 'tall' ? 0.15 : 0.12) : (k.id === 'flat' || k.id === 'shadow') && trim.skirtHeight > 0.12 ? 0.08 : trim.skirtHeight })} className={cn('h-5.5 rounded text-2xs transition-colors', trim.skirting === k.id ? 'bg-active text-fg' : 'text-dim hover:text-fg')}>
               {k.label}
             </button>
           ))}

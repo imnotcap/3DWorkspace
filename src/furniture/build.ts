@@ -664,7 +664,89 @@ function stairs(k: Kit, w: number, h: number, d: number) {
   k.rod('Rail', 0.022, [x, top(d / 2 - 0.1), d / 2 - 0.1], [x, top(-d / 2 + 0.1), -d / 2 + 0.1], 16)
 }
 
+/* ───────── Electrical ───────── */
+
+/** A wall plate: square-edged frame, front face at z = d/2. */
+function plate(k: Kit, w: number, h: number, d: number) {
+  k.box('Plate', w, h, d * 0.6, 0, 0, -d * 0.2, 0.004)
+  k.box('Plate', w - 0.008, h - 0.008, d, 0, 0.004, 0, 0.006)
+}
+
+/** One socket insert (Danish type K: two round pins and the half-moon earth), centred at x. */
+function socketInsert(k: Kit, x: number, h: number, d: number) {
+  const c = h / 2
+  const dish = k.cyl('Plate', 0.024, 0.024, 0.004, x, 0, 0, 40)
+  dish.rotation.x = Math.PI / 2
+  dish.position.set(x, c, d / 2 - 0.001)
+  for (const dx of [-0.0095, 0.0095]) {
+    const hole = k.cyl('Dark', 0.0024, 0.0024, 0.003, 0, 0, 0, 12)
+    hole.rotation.x = Math.PI / 2
+    hole.position.set(x + dx, c + 0.002, d / 2 + 0.0008)
+  }
+  const earth = k.box('Dark', 0.008, 0.004, 0.003, x, c - 0.013, d / 2 - 0.0007, 0.0015)
+  earth.position.z = d / 2 + 0.0008
+}
+
+function socket(k: Kit, w: number, h: number, d: number) {
+  plate(k, w, h, d)
+  socketInsert(k, 0, h, d)
+}
+
+function doubleSocket(k: Kit, w: number, h: number, d: number) {
+  plate(k, w, h, d)
+  socketInsert(k, -w / 4 + 0.002, h, d)
+  socketInsert(k, w / 4 - 0.002, h, d)
+}
+
+function lightSwitch(k: Kit, w: number, h: number, d: number, n: 1 | 2) {
+  plate(k, w, h, d)
+  const rw = (w - 0.022) / n
+  for (let i = 0; i < n; i++) {
+    const x = -((w - 0.022) / 2) + rw * (i + 0.5)
+    const rocker = k.box('Plate', rw - 0.003, h - 0.024, 0.006, x, 0.012, d / 2, 0.003)
+    rocker.rotation.x = -0.06
+  }
+}
+
+function dataSocket(k: Kit, w: number, h: number, d: number) {
+  plate(k, w, h, d)
+  for (const dx of [-0.014, 0.014]) {
+    const ring = k.cyl('Plate', 0.008, 0.008, 0.006, 0, 0, 0, 20)
+    ring.rotation.x = Math.PI / 2
+    ring.position.set(dx, h / 2, d / 2 + 0.002)
+    const pin = k.cyl('Dark', 0.003, 0.003, 0.004, 0, 0, 0, 12)
+    pin.rotation.x = Math.PI / 2
+    pin.position.set(dx, h / 2, d / 2 + 0.004)
+  }
+}
+
+/** Steel panel radiator: profiled front, convector fins showing at the top, valve and brackets. */
+function radiator(k: Kit, w: number, h: number, d: number) {
+  const fd = Math.min(0.03, d * 0.3)
+  // Front and back panels with vertical channels.
+  for (const z of [d / 2 - fd / 2, -d / 2 + fd / 2]) {
+    k.box('Body', w, h, fd * 0.6, 0, 0, z, 0.004)
+    const n = Math.max(4, Math.round(w / 0.033))
+    for (let i = 0; i < n; i++) k.box('Body', 0.022, h - 0.02, fd * 0.4, -w / 2 + (w / n) * (i + 0.5), 0.01, z + Math.sign(z) * fd * 0.3, 0.006)
+  }
+  // Convector fins between the panels, seen through the top grille.
+  const nf = Math.max(6, Math.round(w / 0.025))
+  for (let i = 0; i < nf; i++) k.box('Body', 0.002, h - 0.06, d - fd * 2.2, -w / 2 + (w / nf) * (i + 0.5), 0.03, 0, 0.0005)
+  k.box('Body', w, 0.01, d - fd * 1.6, 0, h - 0.012, 0, 0.002)
+  // Side covers, valve and brackets.
+  for (const sx of [-1, 1]) k.box('Body', 0.008, h, d - fd * 1.2, sx * (w / 2 - 0.004), 0, 0, 0.003)
+  k.cyl('Valve', 0.012, 0.012, 0.07, w / 2 - 0.05, h, d / 2 - 0.03, 20)
+  k.cyl('Valve', 0.02, 0.02, 0.045, w / 2 - 0.05, h + 0.07, d / 2 - 0.03, 24)
+  for (const sx of [-1, 1]) k.box('Valve', 0.03, 0.04, 0.04, sx * (w / 2 - 0.12), h * 0.75, -d / 2 - 0.02, 0.004)
+}
+
 const BUILDERS: Record<string, Builder> = {
+  socket,
+  'double-socket': doubleSocket,
+  switch: (k, w, h, d) => lightSwitch(k, w, h, d, 1),
+  'double-switch': (k, w, h, d) => lightSwitch(k, w, h, d, 2),
+  'data-socket': dataSocket,
+  radiator,
   sofa,
   loveseat: sofa,
   armchair,

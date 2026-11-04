@@ -66,9 +66,9 @@ export interface Opening {
 }
 
 /** Wall panelling (wainscoting) styles. */
-export type PanelStyle = 'none' | 'frames' | 'raised' | 'shaker' | 'tall-frames' | 'beadboard'
+export type PanelStyle = 'none' | 'frames' | 'two-tier' | 'raised' | 'shaker' | 'tall-frames' | 'full-height' | 'beadboard' | 'board-batten'
 /** Skirting board profiles. */
-export type SkirtStyle = 'none' | 'flat' | 'classic' | 'tall'
+export type SkirtStyle = 'none' | 'flat' | 'classic' | 'ogee' | 'tall' | 'shadow'
 
 /** Joinery along a room's walls: panels up to a rail, and skirting boards. */
 export interface RoomTrim {
