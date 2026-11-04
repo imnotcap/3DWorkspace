@@ -1,5 +1,6 @@
-import { BufferAttribute, BufferGeometry, MathUtils, MeshPhysicalMaterial, MeshStandardMaterial, type InterleavedBufferAttribute, type Material, type Texture } from 'three'
+import { BufferAttribute, BufferGeometry, CanvasTexture, MathUtils, MeshPhysicalMaterial, MeshStandardMaterial, RepeatWrapping, SRGBColorSpace, Vector2, type InterleavedBufferAttribute, type Material, type Texture } from 'three'
 import { detailTexture } from './detailTextures'
+import { floorCanvases, loadWood, woodReady } from './floorTextures'
 import { presetById } from './materialPresets'
 import { pbrSet } from './pbrTextures'
 import type { MaterialOverride, ShadeMode } from '@/store/workspace'
@@ -100,6 +101,54 @@ export function surfaceFor(original: Material, o: MaterialOverride | null, opts:
   }
   // Metric UVs (Claude parts): one repeat per `tile` metres. Other meshes: one repeat per UV unit.
   const repeat = (tile: number) => (opts.metric ? 1 / tile : 1)
+  if (preset?.floor) {
+    // Wood floors: every board cut from a photographed wood (fetched at build time), with its
+    // joints and grain as relief. Until the photos have loaded, drawn grain stands in.
+    const spec = preset.floor
+    const apply = () => {
+      const t = floorTextures(preset.id, spec)
+      const at = (x: Texture) => {
+        const c = x.clone()
+        c.repeat.set(opts.metric ? 1 / t.tileX : 1, opts.metric ? 1 / t.tileY : 1)
+        return c
+      }
+      m.map = at(t.map)
+      m.normalMap = at(t.normal)
+      m.needsUpdate = true
+    }
+    apply()
+    let real = false
+    // Best: a photographed floor of this kind (2K colour, normal, roughness), fetched at build time.
+    void pbrSet(preset.id).then((set) => {
+      if (!set?.map) return
+      real = true
+      const r = repeat(set.tile)
+      const tex = (x?: Texture) => {
+        if (!x) return null
+        const c = x.clone()
+        c.repeat.setScalar(r)
+        return c
+      }
+      m.map = tex(set.map)
+      m.normalMap = tex(set.normalMap)
+      m.roughnessMap = tex(set.roughnessMap)
+      m.aoMap = tex(set.aoMap)
+      m.color.set(o.color.toLowerCase() === preset.color.toLowerCase() ? '#ffffff' : o.color)
+      m.needsUpdate = true
+      opts.onUpgrade?.()
+    })
+    if (!woodReady())
+      void loadWood().then(() => {
+        if (!woodReady() || real) return
+        apply()
+        opts.onUpgrade?.()
+      })
+    m.normalScale = new Vector2(0.9, 0.9)
+    m.color.set(o.color.toLowerCase() === preset.color.toLowerCase() ? '#ffffff' : o.color)
+    m.needsUpdate = true
+    m.userData.override = true
+    return m
+  }
   if (preset?.texture) {
     const t = detailTexture(preset.texture).clone()
     t.repeat.setScalar(repeat(1))
@@ -127,4 +176,56 @@ export function surfaceFor(original: Material, o: MaterialOverride | null, opts:
   m.needsUpdate = true
   m.userData.override = true
   return m
+}
+
+/* ───────── Wood floor textures ───────── */
+
+const floorTex = new Map<string, { map: Texture; normal: Texture; tileX: number; tileY: number }>()
+
+/** Colour map and a normal map (joints, grain) for a wood floor, from its drawn canvases. */
+function floorTextures(id: string, spec: NonNullable<ReturnType<typeof presetById>>['floor'] & object) {
+  const key = `${id}:${woodReady() ? 'photo' : 'drawn'}`
+  let hit = floorTex.get(key)
+  if (hit) return hit
+  const c = floorCanvases(id, spec)
+  const map = new CanvasTexture(c.color)
+  map.colorSpace = SRGBColorSpace
+  map.wrapS = map.wrapT = RepeatWrapping
+  map.anisotropy = 8
+  // Height → tangent-space normals (Sobel).
+  const w = c.height.width
+  const h = c.height.height
+  const src = c.height.getContext('2d')!.getImageData(0, 0, w, h).data
+  // With photographed wood, its own light and dark grain adds a little relief.
+  const col = woodReady() ? c.color.getContext('2d')!.getImageData(0, 0, w, h).data : null
+  const relief = spec.brushed ? 0.35 : 0.14
+  const out = document.createElement('canvas')
+  out.width = w
+  out.height = h
+  const ctx = out.getContext('2d')!
+  const img = ctx.createImageData(w, h)
+  const H = (x: number, y: number) => {
+    const i = (((y + h) % h) * w + ((x + w) % w)) * 4
+    const j = src[i] / 255
+    return col ? j * (1 - relief + relief * ((col[i] + col[i + 1] + col[i + 2]) / 765)) : j
+  }
+  const k = 2.2
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const dx = (H(x + 1, y) - H(x - 1, y)) * k
+      const dy = (H(x, y + 1) - H(x, y - 1)) * k
+      const l = Math.hypot(dx, dy, 1)
+      const i = (y * w + x) * 4
+      img.data[i] = (-dx / l) * 127.5 + 127.5
+      img.data[i + 1] = (dy / l) * 127.5 + 127.5
+      img.data[i + 2] = (1 / l) * 127.5 + 127.5
+      img.data[i + 3] = 255
+    }
+  ctx.putImageData(img, 0, 0)
+  const normal = new CanvasTexture(out)
+  normal.wrapS = normal.wrapT = RepeatWrapping
+  normal.anisotropy = 8
+  hit = { map, normal, tileX: c.tileX, tileY: c.tileY }
+  floorTex.set(key, hit)
+  return hit
 }

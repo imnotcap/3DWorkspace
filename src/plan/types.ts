@@ -65,6 +65,24 @@ export interface Opening {
   frame: Finish
 }
 
+/** Wall panelling (wainscoting) styles. */
+export type PanelStyle = 'none' | 'frames' | 'raised' | 'shaker' | 'tall-frames' | 'beadboard'
+/** Skirting board profiles. */
+export type SkirtStyle = 'none' | 'flat' | 'classic' | 'tall'
+
+/** Joinery along a room's walls: panels up to a rail, and skirting boards. */
+export interface RoomTrim {
+  panels: PanelStyle
+  /** Top of the panelling (the rail), m above the floor. */
+  panelHeight: number
+  skirting: SkirtStyle
+  skirtHeight: number
+  /** Paint of the panels, rails and skirting. */
+  color: string
+}
+
+export const DEFAULT_TRIM: RoomTrim = { panels: 'none', panelHeight: 0.9, skirting: 'flat', skirtHeight: 0.08, color: '#f4f2ee' }
+
 /** Settings for a room the plan found; matched to it by a point inside it. */
 export interface RoomInfo {
   id: string
@@ -74,6 +92,7 @@ export interface RoomInfo {
   floor: Finish
   walls: Finish
   ceiling: Finish
+  trim?: RoomTrim
 }
 
 export interface TourPoint {

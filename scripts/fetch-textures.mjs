@@ -16,20 +16,24 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const OUT = join(ROOT, 'public', 'textures')
 const SITE = process.env.AMBIENTCG_BASE ?? 'https://ambientcg.com' // override for testing
 const API = `${SITE}/api/v2/full_json`
-const RES = '1K-JPG'
+const RES = '2K-JPG'
 // File suffixes inside ambientCG zips → our map names. NormalGL is the OpenGL convention three.js uses.
 const MAPS = { Color: 'color', NormalGL: 'normal', Roughness: 'roughness', Metalness: 'metalness', AmbientOcclusion: 'ao' }
 
 const config = JSON.parse(await readFile(join(ROOT, 'scripts', 'ambientcg.config.json'), 'utf8'))
 await mkdir(OUT, { recursive: true })
 
-async function findAsset(query) {
-  const url = `${API}?type=Material&q=${encodeURIComponent(query)}&sort=Popular&limit=5&include=downloadData`
+const used = new Set()
+/** Top search result; for floors, the first wood-floor asset not already given to another floor. */
+async function findAsset(query, floor) {
+  const url = `${API}?type=Material&q=${encodeURIComponent(query)}&sort=Popular&limit=30&include=downloadData`
   const res = await fetch(url, { headers: { 'User-Agent': '3d-workspace-texture-fetch' } })
   if (!res.ok) throw new Error(`search "${query}" → HTTP ${res.status}`)
   const json = await res.json()
-  const asset = json.foundAssets?.[0]
+  const all = json.foundAssets ?? []
+  const asset = floor ? (all.find((a) => /^WoodFloor/i.test(a.assetId) && !used.has(a.assetId)) ?? all.find((a) => /Floor|Parquet|Planks/i.test(a.assetId) && !used.has(a.assetId)) ?? all.find((a) => /^WoodFloor/i.test(a.assetId))) : all[0]
   if (!asset) throw new Error(`no asset for "${query}"`)
+  used.add(asset.assetId)
   return asset
 }
 
@@ -45,7 +49,7 @@ let ok = 0
 for (const [preset, cfg] of Object.entries(config)) {
   if (preset.startsWith('_')) continue
   try {
-    const asset = cfg.id ? { assetId: cfg.id } : await findAsset(cfg.query)
+    const asset = cfg.id ? { assetId: cfg.id } : await findAsset(cfg.query, cfg.floor)
     const id = asset.assetId
     if (!zips.has(id)) {
       const link = zipLink(asset, id)
@@ -59,6 +63,8 @@ for (const [preset, cfg] of Object.entries(config)) {
     for (const [name, data] of Object.entries(files)) {
       const m = Object.entries(MAPS).find(([suffix]) => new RegExp(`_${suffix}\\.(jpg|jpeg|png)$`, 'i').test(name))
       if (!m) continue
+      // Floors: colour, normal and roughness are what shows; skip the rest to keep the site small.
+      if (cfg.floor && (m[1] === 'ao' || m[1] === 'metalness')) continue
       const file = `${id}/${m[1]}.jpg`
       await writeFile(join(OUT, file), data)
       maps[m[1]] = file

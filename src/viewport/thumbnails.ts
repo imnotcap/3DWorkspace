@@ -1,4 +1,4 @@
-import { AgXToneMapping, Box3, DirectionalLight, MathUtils, PerspectiveCamera, PMREMGenerator, Scene, Sphere, Vector3, WebGLRenderer, type Material, type Mesh, type Object3D } from 'three'
+import { AgXToneMapping, Box3, DirectionalLight, MathUtils, Mesh as ThreeMesh, MeshStandardMaterial, PerspectiveCamera, PlaneGeometry, PMREMGenerator, Scene, Sphere, SphereGeometry, Vector3, WebGLRenderer, type Material, type Mesh, type Object3D } from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { buildFurniture } from '@/furniture/build'
@@ -6,13 +6,16 @@ import type { CatalogItem } from '@/furniture/catalog'
 import { slotOverrides } from '@/plan/place'
 import { modelUrl } from '@/store/workspace'
 import { surfaceFor } from './shading'
+import { pbrSet } from './pbrTextures'
+import { floorPreview, loadWood, woodReady } from './floorTextures'
+import { presetById } from './materialPresets'
 
 /**
  * Catalog previews: each piece rendered once, three-quarter view, in its default finishes, on a
  * small offscreen renderer. Cached for the session (and in localStorage between visits).
  */
 const SIZE = 256
-const VERSION = 'thumb-v1'
+const VERSION = 'thumb-v3'
 const cache = new Map<string, Promise<string>>()
 let queue: Promise<unknown> = Promise.resolve()
 let ctx: { gl: WebGLRenderer; scene: Scene; cam: PerspectiveCamera } | null = null
@@ -116,6 +119,72 @@ export function thumbnail(item: CatalogItem): Promise<string> {
       localStorage.setItem(key, url)
     } catch {
       /* full or unavailable: session cache only */
+    }
+    return url
+  })) as Promise<string>
+  p.catch(() => cache.delete(key))
+  cache.set(key, p)
+  return p
+}
+
+/**
+ * Material previews for the galleries: wood floors as a piece of the floor itself; other materials
+ * as a ball (models) or a lit tile (walls), rendered with the real material. Cached like the catalog.
+ */
+export function materialThumb(presetId: string, shape: 'ball' | 'tile' = 'ball'): Promise<string> {
+  const preset = presetById(presetId)
+  if (!preset) return Promise.reject(new Error('unknown material'))
+  const key = `${VERSION}:mat:${presetId}:${preset.floor ? 'floor' : shape}`
+  let p = cache.get(key)
+  if (p) return p
+  try {
+    const stored = localStorage.getItem(key)
+    if (stored) {
+      p = Promise.resolve(stored)
+      cache.set(key, p)
+      return p
+    }
+  } catch {
+    /* storage unavailable */
+  }
+  p = (queue = queue.then(async () => {
+    await new Promise<void>((r) => ('requestIdleCallback' in window ? requestIdleCallback(() => r(), { timeout: 1500 }) : setTimeout(r, 30)))
+    let url: string
+    let keep = true
+    if (preset.floor) {
+      // The photographed floor if there is one (about 1.2 m of it), else boards cut from wood photos.
+      const set = await pbrSet(preset.id).catch(() => null)
+      const img = set?.map?.image as HTMLImageElement | undefined
+      if (img) {
+        const c = document.createElement('canvas')
+        c.width = c.height = 256
+        const g = c.getContext('2d')!
+        const part = Math.min(1, 1.2 / set!.tile)
+        g.drawImage(img, 0, 0, img.width * part, img.height * part, 0, 0, 256, 256)
+        url = c.toDataURL('image/jpeg', 0.88)
+      } else {
+        await loadWood()
+        url = floorPreview(preset.id, preset.floor, 256)
+        // Drawn-grain previews aren't kept: next time the photos may be there.
+        keep = woodReady()
+      }
+    }
+    else {
+      const base = new MeshStandardMaterial()
+      const mat = surfaceFor(base, { color: preset.color, roughness: preset.roughness, metalness: preset.metalness, keepTexture: false, preset: preset.id }, { metric: true })
+      // Metric UVs on the preview shapes, so textures show at a believable scale.
+      const geo = shape === 'ball' ? new SphereGeometry(0.25, 64, 48) : new PlaneGeometry(0.8, 0.8)
+      const uv = geo.attributes.uv
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * (shape === 'ball' ? 1.6 : 0.8), uv.getY(i) * (shape === 'ball' ? 0.8 : 0.8))
+      const mesh = new ThreeMesh(geo, mat)
+      if (shape === 'tile') mesh.rotation.x = -0.35
+      url = shoot(mesh)
+    }
+    scheduleRelease()
+    try {
+      if (keep) localStorage.setItem(key, url)
+    } catch {
+      /* full or unavailable */
     }
     return url
   })) as Promise<string>

@@ -1,5 +1,5 @@
 import { FlipHorizontal2, Trash2 } from 'lucide-react'
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import ScrubField from '@/components/reactbits/ScrubField'
 import { cn } from '@/lib/cn'
 import { actions } from '@/lib/actions'
@@ -9,6 +9,7 @@ import { DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, DEFAULT_WALL_FINISH, OPEN
 import { uid, useActiveProject, useWorkspace, type PlanData } from '@/store/workspace'
 import { Button, Field, Select, inputCls } from '@/ui/primitives'
 import { MATERIAL_LIBRARY, PAINT_COLORS, presetById } from '@/viewport/materialPresets'
+import { MaterialGallery } from './MaterialGallery'
 import { PropertiesPanel } from './Properties'
 
 /** Right-hand panel: whatever is selected in the plan or the 3D view. */
@@ -65,28 +66,21 @@ function Cm({ label, value, min, max, onChange }: { label: string; value: number
 const edit = (label: string, first: boolean, fn: (p: PlanData) => PlanData) => useWorkspace.getState().editPlan(first ? label : null, fn)
 
 /** Paint colours and/or library materials as swatches. */
-function FinishPicker({ value, onChange, materials }: { value: Finish; onChange: (f: Finish) => void; materials: string[] }) {
+function FinishPicker({ value, onChange, materials, groups }: { value: Finish; onChange: (f: Finish) => void; materials: string[]; groups?: { label: string; ids: string[] }[] }) {
+  const [group, setGroup] = useState(() => Math.max(0, groups?.findIndex((g) => !!value.preset && g.ids.includes(value.preset)) ?? 0))
+  const ids = groups ? groups[group].ids : materials
   return (
     <div className="space-y-1.5">
-      {materials.length > 0 && (
-        <div className="grid grid-cols-4 gap-1">
-          {materials.map((id) => {
-            const p = presetById(id)!
-            return (
-              <button
-                key={id}
-                type="button"
-                title={p.name}
-                onClick={() => onChange({ color: p.color, preset: p.id })}
-                className={cn('flex h-9 flex-col items-center justify-end overflow-hidden rounded-md border pb-0.5 text-[9px] text-white/90', value.preset === id ? 'border-accent ring-1 ring-accent' : 'border-line-strong')}
-                style={{ background: `linear-gradient(160deg, color-mix(in srgb, ${p.color} 80%, white), ${p.color})`, textShadow: '0 1px 2px #0008' }}
-              >
-                {p.name.replace(' planks', '').replace(' tiles', '')}
-              </button>
-            )
-          })}
+      {groups && (
+        <div className="flex gap-0.5">
+          {groups.map((g, i) => (
+            <button key={g.label} type="button" onClick={() => setGroup(i)} className={cn('h-5.5 rounded px-1.5 text-2xs transition-colors', i === group ? 'bg-active text-fg' : 'text-dim hover:text-fg')}>
+              {g.label}
+            </button>
+          ))}
         </div>
       )}
+      {ids.length > 0 && <MaterialGallery ids={ids} value={value.preset} shape="tile" onPick={(p) => onChange({ color: p.color, preset: p.id })} />}
       <div className="grid grid-cols-9 gap-1">
         {PAINT_COLORS.map((c) => (
           <button
@@ -110,6 +104,10 @@ function FinishPicker({ value, onChange, materials }: { value: Finish; onChange:
 }
 
 const FLOORS = MATERIAL_LIBRARY.filter((m) => m.category === 'Floor').map((m) => m.id)
+const FLOOR_GROUPS = [
+  { label: 'Wood floors', ids: [...MATERIAL_LIBRARY.filter((m) => m.category === 'Wood floor').map((m) => m.id), 'oak-floor', 'walnut-floor'] },
+  { label: 'Tiles, stone & more', ids: FLOORS.filter((id) => id !== 'oak-floor' && id !== 'walnut-floor') },
+]
 const WALL_MATERIALS = ['white-tile', 'concrete', 'oak', 'marble']
 
 function WallInspector({ id, side }: { id: string; side?: 'left' | 'right' }) {
@@ -254,7 +252,7 @@ function RoomInspector({ levelId, at }: { levelId: string; at: Vec2 }) {
       </Field>
       <div className="space-y-1.5 border-t border-line pt-2">
         <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Floor</span>
-        <FinishPicker value={info?.floor ?? DEFAULT_FLOOR_FINISH} materials={FLOORS} onChange={(floor) => update('Floor', true, { floor })} />
+        <FinishPicker value={info?.floor ?? DEFAULT_FLOOR_FINISH} materials={FLOORS} groups={FLOOR_GROUPS} onChange={(floor) => update('Floor', true, { floor })} />
       </div>
       <div className="space-y-1.5 border-t border-line pt-2">
         <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Walls · paint</span>

@@ -4,6 +4,7 @@ import { cn } from '@/lib/cn'
 import { useWorkspace, type MaterialOverride, type SceneObject } from '@/store/workspace'
 import { Button, Field, Slider, Toggle, inputCls } from '@/ui/primitives'
 import { COLOR_PALETTE, MATERIAL_LIBRARY, presetById, type MaterialPreset } from '@/viewport/materialPresets'
+import { MaterialGallery } from './MaterialGallery'
 
 const ALL = '__all'
 const CATEGORIES = ['Fabric', 'Wood', 'Metal', 'Coating', 'Plastic', 'Stone', 'Glass', 'Floor'] as const
@@ -73,20 +74,7 @@ export function MaterialsSection({ obj }: { obj: SceneObject }) {
             </button>
           ))}
         </div>
-        <div className="grid grid-cols-2 gap-1">
-          {MATERIAL_LIBRARY.filter((p) => p.category === category).map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => applyPreset(p)}
-              title={p.texture ? `${p.name} · textured` : p.name}
-              className={cn('flex h-7 items-center gap-1.5 rounded-md border px-1.5 text-left text-2xs transition-colors', current?.preset === p.id ? 'border-accent bg-accent-soft text-fg' : 'border-line-strong bg-app/40 text-dim hover:text-fg')}
-            >
-              <Ball color={p.color} roughness={p.roughness} metalness={p.metalness} />
-              <span className="truncate">{p.name}</span>
-            </button>
-          ))}
-        </div>
+        <MaterialGallery ids={MATERIAL_LIBRARY.filter((p) => p.category === category).map((p) => p.id)} value={current?.preset} onPick={applyPreset} />
       </div>
 
       <Field label="Colour">
