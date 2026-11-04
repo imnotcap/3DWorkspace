@@ -404,9 +404,11 @@ function buildOpening(o: Opening, g: WallGeom, height: number, interior: 'left' 
       sash.position.set(sx, fw, 0)
       grp.add(sash)
     }
-    // Window board inside, sill outside.
-    grp.add(box(W + 0.06, 0.025, T / 2 + 0.04, frameM, 0, -0.0125, zIn * (T / 4 + 0.02)))
-    grp.add(box(W + 0.04, 0.03, T / 2 + 0.05, ALU, 0, -0.015, -zIn * (T / 4 + 0.025)))
+    // Window board inside, sill outside. Their tops stand 4 mm proud of the hole's bottom (not in
+    // the same plane as the wall's reveal, which would flicker), and they stop 2 mm short of the
+    // wall faces' ends so no faces coincide.
+    grp.add(box(W + 0.06, 0.025, T / 2 + 0.04, frameM, 0, -0.0125 + 0.004, zIn * (T / 4 + 0.02)))
+    grp.add(box(W + 0.04, 0.03, T / 2 + 0.05, ALU, 0, -0.015 + 0.004, -zIn * (T / 4 + 0.025)))
   }
   if (o.kind === 'french-window') grp.add(box(W, 0.02, T + 0.004, frameM, 0, 0.01, 0))
   return grp
