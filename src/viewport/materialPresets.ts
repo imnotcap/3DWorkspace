@@ -1,11 +1,12 @@
 // Material library. Kept free of three.js so the UI can list it without the 3D chunk.
+import type { FloorSpec } from './floorTextures'
 
 export type DetailTexture = 'oak' | 'walnut' | 'birch' | 'marble' | 'concrete' | 'brushed' | 'leather' | 'fabric' | 'powder' | 'planks' | 'tiles' | 'small-tiles' | 'terrazzo' | 'weave'
 
 export interface MaterialPreset {
   id: string
   name: string
-  category: 'Metal' | 'Coating' | 'Plastic' | 'Wood' | 'Stone' | 'Glass' | 'Fabric' | 'Floor'
+  category: 'Metal' | 'Coating' | 'Plastic' | 'Wood' | 'Stone' | 'Glass' | 'Fabric' | 'Floor' | 'Wood floor'
   color: string
   roughness: number
   metalness: number
@@ -15,7 +16,44 @@ export interface MaterialPreset {
   sheen?: number
   /** Procedural greyscale detail; the colour tints it. */
   texture?: DetailTexture
+  /** Wood floors: drawn board by board in full colour (planks, parquet patterns). */
+  floor?: FloorSpec
 }
+
+const OAK = { base: '#c9a274', vary_tone: 0.09, grain: 1, grainColor: '#7a5532', joint: 0.8 }
+const wood = (id: string, name: string, color: string, roughness: number, floor: Partial<FloorSpec> & Pick<FloorSpec, 'pattern' | 'w' | 'L'>): MaterialPreset => ({
+  id,
+  name,
+  category: 'Wood floor',
+  color,
+  roughness,
+  metalness: 0,
+  floor: { ...OAK, base: color, ...floor },
+})
+
+/** Danish wood floors: patterns, sizes, species and finishes. */
+export const WOOD_FLOORS: MaterialPreset[] = [
+  wood('wf-massiv-eg', 'Massivt egetræsgulv', '#c9a274', 0.55, { pattern: 'plank', w: 0.14, L: 1.8, vary: 0.35 }),
+  wood('wf-lamel', 'Lamelparket', '#c7a173', 0.5, { pattern: 'plank', w: 0.15, L: 2.2, vary: 0.02, joint: 0.5 }),
+  wood('wf-sildeben', 'Sildebensparket', '#c49c6c', 0.5, { pattern: 'herringbone', w: 0.07, L: 0.42 }),
+  wood('wf-fransk-sildeben', 'Fransk sildebensparket', '#c6a072', 0.5, { pattern: 'chevron', w: 0.09, L: 0.5, angle: 45 }),
+  wood('wf-chevron', 'Chevron parket', '#bf9566', 0.5, { pattern: 'chevron', w: 0.12, L: 0.7, angle: 35 }),
+  wood('wf-hollandsk-sildeben', 'Hollandsk sildebensparket', '#c29a6b', 0.5, { pattern: 'dutch-herringbone', w: 0.14, L: 0.42 }),
+  wood('wf-3-stavs', '3-stavs parket', '#c8a171', 0.45, { pattern: 'strip', w: 0.2, L: 0.5, strips: 3, joint: 0.5 }),
+  wood('wf-2-stavs', '2-stavs parket', '#c59e6f', 0.45, { pattern: 'strip', w: 0.2, L: 0.6, strips: 2, joint: 0.5 }),
+  wood('wf-1-stavs', '1-stavs plankegulv', '#c9a376', 0.5, { pattern: 'plank', w: 0.19, L: 2.2, vary: 0.05 }),
+  wood('wf-herregaard', 'Herregårdsplank', '#be946a', 0.55, { pattern: 'plank', w: 0.25, L: 3.5, vary: 0.35, widths: [0.25, 0.2, 0.3, 0.22], joint: 1.2 }),
+  wood('wf-xl', 'XL-plankegulv', '#c9a275', 0.5, { pattern: 'plank', w: 0.26, L: 2.4, vary: 0.15, joint: 1 }),
+  wood('wf-xxl', 'XXL-plankegulv', '#c49d70', 0.5, { pattern: 'plank', w: 0.35, L: 3.6, vary: 0.15, joint: 1.2 }),
+  wood('wf-boerstet', 'Børstet egetræsgulv', '#c3996a', 0.65, { pattern: 'plank', w: 0.19, L: 2.2, vary: 0.25, grain: 1.5, brushed: true }),
+  wood('wf-roeget', 'Røget egetræsgulv', '#6b4b33', 0.55, { pattern: 'plank', w: 0.19, L: 2.2, vary: 0.25, grainColor: '#2e1d10', vary_tone: 0.12, species: 'dark' }),
+  wood('wf-hvidolieret', 'Hvidolieret egetræsgulv', '#dccbb3', 0.6, { pattern: 'plank', w: 0.19, L: 2.2, vary: 0.25, grainColor: '#9c8467', grain: 0.8, vary_tone: 0.05 }),
+  wood('wf-naturmat', 'Naturmatlakeret egetræsgulv', '#cba679', 0.38, { pattern: 'plank', w: 0.19, L: 2.2, vary: 0.25 }),
+  wood('wf-haardvoks', 'Hårdvoksolieret trægulv', '#c09363', 0.48, { pattern: 'plank', w: 0.19, L: 2.2, vary: 0.25, vary_tone: 0.1 }),
+  wood('wf-rustik', 'Rustikt plankegulv', '#b88b5d', 0.6, { pattern: 'plank', w: 0.22, L: 2.4, vary: 0.3, knots: 5, vary_tone: 0.15, grain: 1.3, joint: 1.2 }),
+  wood('wf-fyr', 'Massivt fyrretræsgulv', '#d8b27c', 0.55, { pattern: 'plank', w: 0.2, L: 2.4, vary: 0.3, grainColor: '#a46c34', knots: 3, grain: 1.3, vary_tone: 0.1, species: 'pine' }),
+  wood('wf-ask', 'Massivt asketræsgulv', '#d9c7a6', 0.5, { pattern: 'plank', w: 0.14, L: 2.0, vary: 0.3, grainColor: '#8f7a5c', grain: 1.3, vary_tone: 0.06, species: 'ash' }),
+]
 
 export const MATERIAL_LIBRARY: MaterialPreset[] = [
   { id: 'chrome', name: 'Chrome', category: 'Metal', color: '#f2f2f2', roughness: 0.05, metalness: 1 },
@@ -65,6 +103,7 @@ export const MATERIAL_LIBRARY: MaterialPreset[] = [
   { id: 'terrazzo', name: 'Terrazzo', category: 'Floor', color: '#e7e3dc', roughness: 0.35, metalness: 0, texture: 'terrazzo' },
   { id: 'carpet', name: 'Carpet', category: 'Floor', color: '#9d958a', roughness: 1, metalness: 0, sheen: 0.5, texture: 'fabric' },
   { id: 'polished-concrete', name: 'Polished concrete', category: 'Floor', color: '#a7a6a2', roughness: 0.4, metalness: 0, texture: 'concrete' },
+  ...WOOD_FLOORS,
 ]
 
 /** Interior paint colours for walls and ceilings. */

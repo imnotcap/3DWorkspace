@@ -129,5 +129,125 @@
     "query": "velvet",
     "id": null,
     "tile_m": 0.4
+  },
+  "wf-massiv-eg": {
+    "query": "wood floor oak",
+    "id": null,
+    "tile_m": 2.0,
+    "floor": true
+  },
+  "wf-lamel": {
+    "query": "parquet",
+    "id": null,
+    "tile_m": 2.0,
+    "floor": true
+  },
+  "wf-sildeben": {
+    "query": "herringbone",
+    "id": null,
+    "tile_m": 1.5,
+    "floor": true
+  },
+  "wf-fransk-sildeben": {
+    "query": "chevron",
+    "id": null,
+    "tile_m": 1.5,
+    "floor": true
+  },
+  "wf-chevron": {
+    "query": "chevron parquet",
+    "id": null,
+    "tile_m": 1.5,
+    "floor": true
+  },
+  "wf-hollandsk-sildeben": {
+    "query": "herringbone parquet",
+    "id": null,
+    "tile_m": 1.5,
+    "floor": true
+  },
+  "wf-3-stavs": {
+    "query": "parquet floor",
+    "id": null,
+    "tile_m": 2.0,
+    "floor": true
+  },
+  "wf-2-stavs": {
+    "query": "parquet wood",
+    "id": null,
+    "tile_m": 2.0,
+    "floor": true
+  },
+  "wf-1-stavs": {
+    "query": "wood floor",
+    "id": null,
+    "tile_m": 2.0,
+    "floor": true
+  },
+  "wf-herregaard": {
+    "query": "wide planks",
+    "id": null,
+    "tile_m": 2.5,
+    "floor": true
+  },
+  "wf-xl": {
+    "query": "wood planks",
+    "id": null,
+    "tile_m": 2.5,
+    "floor": true
+  },
+  "wf-xxl": {
+    "query": "planks floor",
+    "id": null,
+    "tile_m": 3.0,
+    "floor": true
+  },
+  "wf-boerstet": {
+    "query": "brushed wood floor",
+    "id": null,
+    "tile_m": 2.0,
+    "floor": true
+  },
+  "wf-roeget": {
+    "query": "dark wood floor",
+    "id": null,
+    "tile_m": 2.0,
+    "floor": true
+  },
+  "wf-hvidolieret": {
+    "query": "white wood floor",
+    "id": null,
+    "tile_m": 2.0,
+    "floor": true
+  },
+  "wf-naturmat": {
+    "query": "oak floor",
+    "id": null,
+    "tile_m": 2.0,
+    "floor": true
+  },
+  "wf-haardvoks": {
+    "query": "wood floor natural",
+    "id": null,
+    "tile_m": 2.0,
+    "floor": true
+  },
+  "wf-rustik": {
+    "query": "old wood floor",
+    "id": null,
+    "tile_m": 2.0,
+    "floor": true
+  },
+  "wf-fyr": {
+    "query": "pine floor",
+    "id": null,
+    "tile_m": 2.0,
+    "floor": true
+  },
+  "wf-ask": {
+    "query": "light wood floor",
+    "id": null,
+    "tile_m": 2.0,
+    "floor": true
   }
 }
