@@ -5,7 +5,7 @@ import { cn } from '@/lib/cn'
 import { actions } from '@/lib/actions'
 import { analyse, add, dist, mul, norm, pointInPolygon, sub, wallLength } from '@/plan/geometry'
 import { levelElevations, roomFor } from '@/plan/levels'
-import { DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, DEFAULT_WALL_FINISH, OPENING_DEFAULTS, type Finish, type OpeningKind, type RoomInfo, type Vec2 } from '@/plan/types'
+import { DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, DEFAULT_TRIM, DEFAULT_WALL_FINISH, OPENING_DEFAULTS, type Finish, type OpeningKind, type PanelStyle, type RoomInfo, type RoomTrim, type SkirtStyle, type Vec2 } from '@/plan/types'
 import { uid, useActiveProject, useWorkspace, type PlanData } from '@/store/workspace'
 import { Button, Field, Select, inputCls } from '@/ui/primitives'
 import { MATERIAL_LIBRARY, PAINT_COLORS, presetById } from '@/viewport/materialPresets'
@@ -258,10 +258,92 @@ function RoomInspector({ levelId, at }: { levelId: string; at: Vec2 }) {
         <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Walls · paint</span>
         <FinishPicker value={info?.walls ?? DEFAULT_WALL_FINISH} materials={WALL_MATERIALS} onChange={(walls) => update('Paint walls', true, { walls })} />
       </div>
+      <TrimSection trim={info?.trim ?? DEFAULT_TRIM} onChange={(trim, first) => update('Wall panels', first, { trim })} />
       <div className="space-y-1.5 border-t border-line pt-2">
         <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Ceiling</span>
         <FinishPicker value={info?.ceiling ?? DEFAULT_CEILING_FINISH} materials={[]} onChange={(ceiling) => update('Ceiling', true, { ceiling })} />
       </div>
+    </div>
+  )
+}
+
+/** Little elevations of each panel style, so you can see what you pick. */
+function PanelIcon({ style }: { style: PanelStyle }) {
+  const st = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.2 }
+  const panels = (y0: number, y1: number) => [3, 23, 43].map((x) => <rect key={`${x}${y0}`} x={x} y={y0} width={14} height={y1 - y0} rx={0.5} {...st} />)
+  return (
+    <svg viewBox="0 0 60 44" className="h-9 w-full">
+      <line x1={0} y1={42} x2={60} y2={42} {...st} strokeWidth={2.4} />
+      {style !== 'none' && style !== 'tall-frames' && <line x1={0} y1={18} x2={60} y2={18} {...st} strokeWidth={2} />}
+      {style === 'frames' && panels(22, 38)}
+      {style === 'tall-frames' && (
+        <>
+          <line x1={0} y1={26} x2={60} y2={26} {...st} strokeWidth={2} />
+          {panels(29, 39)}
+          {panels(3, 22)}
+        </>
+      )}
+      {style === 'raised' && (
+        <>
+          {panels(22, 38)}
+          {[6, 26, 46].map((x) => <rect key={x} x={x} y={25} width={8} height={10} fill="currentColor" opacity={0.25} />)}
+        </>
+      )}
+      {style === 'shaker' && [1, 21, 41, 59].map((x) => <rect key={x} x={x - 1} y={20} width={2.5} height={21} fill="currentColor" opacity={0.6} />)}
+      {style === 'shaker' && <rect x={0} y={20} width={60} height={2.5} fill="currentColor" opacity={0.6} />}
+      {style === 'beadboard' && Array.from({ length: 12 }, (_, i) => <line key={i} x1={2.5 + i * 5} y1={20} x2={2.5 + i * 5} y2={40} {...st} strokeWidth={0.8} />)}
+    </svg>
+  )
+}
+
+const PANEL_STYLES: { id: PanelStyle; label: string }[] = [
+  { id: 'none', label: 'None' },
+  { id: 'frames', label: 'Frames' },
+  { id: 'tall-frames', label: 'Full height' },
+  { id: 'raised', label: 'Raised panels' },
+  { id: 'shaker', label: 'Shaker' },
+  { id: 'beadboard', label: 'Beadboard' },
+]
+const SKIRT_STYLES: { id: SkirtStyle; label: string }[] = [
+  { id: 'none', label: 'None' },
+  { id: 'flat', label: 'Flat' },
+  { id: 'classic', label: 'Classic' },
+  { id: 'tall', label: 'Tall' },
+]
+
+/** Wall panelling (wainscoting) and skirting boards for the whole room. */
+function TrimSection({ trim, onChange }: { trim: RoomTrim; onChange: (t: RoomTrim, first: boolean) => void }) {
+  const set = (patch: Partial<RoomTrim>, first = true) => onChange({ ...trim, ...patch }, first)
+  return (
+    <div className="space-y-2 border-t border-line pt-2">
+      <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Wall panels</span>
+      <div className="grid grid-cols-3 gap-1">
+        {PANEL_STYLES.map((p) => (
+          <button key={p.id} type="button" onClick={() => set({ panels: p.id })} className={cn('flex flex-col items-center gap-0.5 rounded-lg border px-1 pb-1 pt-1.5 text-[10px] transition-colors', trim.panels === p.id ? 'border-accent bg-accent-soft text-fg' : 'border-line-strong bg-app/40 text-dim hover:text-fg')}>
+            <PanelIcon style={p.id} />
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {trim.panels !== 'none' && <Cm label="Panel height" value={trim.panelHeight} min={0.5} max={2.2} onChange={(v, f) => set({ panelHeight: v }, f)} />}
+      <Field label="Skirting">
+        <div className="grid grid-cols-4 gap-0.5 rounded-md border border-line-strong bg-app/60 p-0.5">
+          {SKIRT_STYLES.map((k) => (
+            <button key={k.id} type="button" onClick={() => set({ skirting: k.id, skirtHeight: k.id === 'tall' ? Math.max(trim.skirtHeight, 0.15) : k.id === 'flat' && trim.skirtHeight > 0.12 ? 0.08 : trim.skirtHeight })} className={cn('h-5.5 rounded text-2xs transition-colors', trim.skirting === k.id ? 'bg-active text-fg' : 'text-dim hover:text-fg')}>
+              {k.label}
+            </button>
+          ))}
+        </div>
+      </Field>
+      {trim.skirting !== 'none' && <Cm label="Skirting height" value={trim.skirtHeight} min={0.04} max={0.3} onChange={(v, f) => set({ skirtHeight: v }, f)} />}
+      <Field label="Colour">
+        <div className="flex flex-wrap items-center gap-1">
+          {['#f4f2ee', '#ffffff', '#e8dfd0', '#cfc7bb', '#a3a39d', '#3f4245', '#3b4f45', '#2c3a52'].map((c) => (
+            <button key={c} type="button" aria-label={c} onClick={() => set({ color: c })} className={cn('size-5 rounded border', trim.color.toLowerCase() === c ? 'border-white ring-1 ring-accent' : 'border-black/30')} style={{ background: c }} />
+          ))}
+          <input type="color" value={trim.color} onChange={(e) => set({ color: e.target.value }, false)} className="h-5 w-7 cursor-pointer rounded border border-line-strong bg-transparent" />
+        </div>
+      </Field>
     </div>
   )
 }
