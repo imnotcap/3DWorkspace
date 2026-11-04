@@ -21,8 +21,9 @@ import { presetById } from '@/viewport/materialPresets'
 import { analyse, clampOpening, interiorPoint, pointInPolygon, wallIdOf, type PlanGeom, type WallGeom } from './geometry'
 import { roomFor } from './levels'
 import { trimGeometry } from './trim'
+import { boardFit, ceilingGeometry, ceilingTop, infillGeometry, rafterGeometry, roofFrame } from './roof'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, DEFAULT_TRIM, DEFAULT_WALL_FINISH, EXTERIOR_FINISH, OPENING_DEFAULTS, type CeilingBeams, type Finish, type Level, type Opening, type RoomInfo, type Vec2, type Wall } from './types'
+import { DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, flatRoof, DEFAULT_TRIM, DEFAULT_WALL_FINISH, EXTERIOR_FINISH, OPENING_DEFAULTS, type Finish, type Level, type Opening, type RoomInfo, type Vec2, type Wall } from './types'
 
 /**
  * Plan → 3D. Walls are built face by face so every stretch of wall surface knows which room
@@ -203,49 +204,6 @@ export interface LevelBuildInput {
   onUpgrade?: () => void
 }
 
-/**
- * Exposed beams under the ceiling: parallel to one side of the room's bounding box, spaced evenly
- * from its middle, each cut to the room outline (any shape) at its centre line.
- */
-export function beamGeometry(poly: Vec2[], ceiling: number, b: CeilingBeams): BufferGeometry | null {
-  const xs = poly.map((p) => p[0])
-  const ys = poly.map((p) => p[1])
-  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]
-  // Beams run across the short side: they are spaced along the long one.
-  const alongX = x1 - x0 >= y1 - y0 === b.across
-  const [a0, a1] = alongX ? [x0, x1] : [y0, y1]
-  const n = Math.max(1, Math.floor((a1 - a0 - b.width) / b.spacing))
-  const first = (a0 + a1) / 2 - ((n - 1) * b.spacing) / 2
-  const geos: BufferGeometry[] = []
-  for (let i = 0; i < n; i++) {
-    const a = first + i * b.spacing
-    // Where the line at `a` crosses the outline: the inside stretches.
-    const cuts: number[] = []
-    for (let k = 0; k < poly.length; k++) {
-      const p = poly[k]
-      const q = poly[(k + 1) % poly.length]
-      const pa = alongX ? p[0] : p[1]
-      const qa = alongX ? q[0] : q[1]
-      if ((pa <= a) === (qa <= a)) continue
-      const t = (a - pa) / (qa - pa)
-      cuts.push(alongX ? p[1] + (q[1] - p[1]) * t : p[0] + (q[0] - p[0]) * t)
-    }
-    cuts.sort((u, v) => u - v)
-    for (let k = 0; k + 1 < cuts.length; k += 2) {
-      const L = cuts[k + 1] - cuts[k]
-      if (L < 0.2) continue
-      const mid = (cuts[k] + cuts[k + 1]) / 2
-      const g = new BoxGeometry(alongX ? b.width : L, b.depth, alongX ? L : b.width)
-      g.translate(alongX ? a : mid, ceiling - b.depth / 2 - 0.001, alongX ? mid : a)
-      geos.push(g)
-    }
-  }
-  if (!geos.length) return null
-  const merged = mergeGeometries(geos)
-  geos.forEach((g) => g.dispose())
-  return merged
-}
-
 /** An opening as the panelling sees it: with the door casing (7 cm) or the window board around it. */
 export function trimHole(o: Opening) {
   const c = OPENING_DEFAULTS[o.kind].door ? 0.07 : o.sill > 0.05 ? 0.03 : 0
@@ -405,7 +363,18 @@ export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGe
     const pick: PickInfo = { kind: 'room', id: info?.id ?? `face:${i}`, face: i }
     const fb = new Builder()
     fb.polygon(f.polygon, 0, true, fh)
-    group.add(mesh(fb.geometry(), finishMaterial(info?.floor ?? DEFAULT_FLOOR_FINISH, 'floor', onUpgrade), 'floor', pick))
+    const fgeo = fb.geometry()
+    // Floor patterns (boards, herringbone, tiles) start from the middle of the room: the cuts at
+    // opposite walls match.
+    if ((info?.floor ?? DEFAULT_FLOOR_FINISH).preset) {
+      const xs = f.inner.map((p) => p[0])
+      const ys = f.inner.map((p) => p[1])
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2
+      const cy = (Math.min(...ys) + Math.max(...ys)) / 2
+      const uvs = fgeo.attributes.uv
+      for (let k = 0; k < uvs.count; k++) uvs.setXY(k, uvs.getX(k) - cx, uvs.getY(k) - cy)
+    }
+    group.add(mesh(fgeo, finishMaterial(info?.floor ?? DEFAULT_FLOOR_FINISH, 'floor', onUpgrade), 'floor', pick))
     if (input.levelIndex > 0) {
       const shape = new Shape(f.polygon.map((p) => new Vector2(p[0], -p[1])))
       for (const h of fh) shape.holes.push(new Shape(h.map((p) => new Vector2(p[0], -p[1]))))
@@ -414,26 +383,32 @@ export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGe
       slab.translate(0, -level.slab, 0)
       group.add(mesh(slab, plaster, 'slab'))
     }
-    const cb = new Builder()
-    cb.polygon(f.polygon, level.height, false, ch)
+    // Ceiling: flat at the room's height, or sloping / pitched. Boards fit the room (whole boards
+    // wall to wall, joints on the beams); the frame is the room's inner outline.
+    const roof = info?.roof ?? flatRoof(level.height)
+    const frame = roofFrame(f.inner, roof)
     const ceilFinish = info?.ceiling ?? DEFAULT_CEILING_FINISH
-    const cgeo = cb.geometry()
-    // Ceiling boards are laid out from the middle of the room: equal cut boards at both walls.
     const spec = presetById(ceilFinish.preset)?.ceiling
-    if (spec) {
-      const xs = f.inner.map((p) => p[0])
-      const ys = f.inner.map((p) => p[1])
-      const cx = (Math.min(...xs) + Math.max(...xs)) / 2
-      const cy = (Math.min(...ys) + Math.max(...ys)) / 2
-      const uv = cgeo.attributes.uv
-      for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) - cx + spec.tile[0] / 2, uv.getY(k) - cy + spec.tile[1] / 2)
-    }
-    const ceil = mesh(cgeo, finishMaterial(ceilFinish, 'ceiling', onUpgrade), 'ceiling', pick)
+    const uv = spec ? boardFit(roof, frame, spec.tile, info?.beams) : (a: number, c: number): [number, number] => [a, c]
+    const ceil = mesh(ceilingGeometry(f.polygon, roof, frame, ch, uv), finishMaterial(ceilFinish, 'ceiling', onUpgrade), 'ceiling', pick)
     ceil.userData.ceiling = true
     ceil.castShadow = false
     group.add(ceil)
+    // Walls up to a ceiling higher than their top (gable ends, the high side of a lean-to).
+    if (ceilingTop(roof) > level.height + 1e-3) {
+      const edges = f.edges.map((e) => {
+        const w = walls.find((x) => x.id === e.wallId)
+        return { a: e.from, b: e.to, h: e.h, top: Math.max(0.1, w?.height ?? level.height) }
+      })
+      const ig = infillGeometry(edges, roof, frame)
+      if (ig) {
+        const im = mesh(ig, finishMaterial(info?.walls ?? DEFAULT_WALL_FINISH, 'wall', onUpgrade), 'gable wall', pick)
+        im.userData.ceiling = true
+        group.add(im)
+      }
+    }
     if (info?.beams) {
-      const bg = beamGeometry(f.inner, level.height, info.beams)
+      const bg = rafterGeometry(f.inner, roof, info.beams)
       if (bg) {
         const bm = mesh(bg, finishMaterial({ color: info.beams.color }, 'frame', onUpgrade), 'ceiling beams', pick)
         bm.userData.ceiling = true
