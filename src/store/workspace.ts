@@ -165,7 +165,7 @@ export interface Project {
 export type PlanData = Pick<Project, 'levels' | 'walls' | 'openings' | 'rooms' | 'tour'>
 
 export type View = 'plan' | '3d' | 'split'
-export type PlanTool = 'select' | 'wall' | 'room' | 'door' | 'window' | 'tour'
+export type PlanTool = 'select' | 'wall' | 'arc' | 'room' | 'door' | 'window' | 'tour'
 /** A selected plan element. Rooms are picked by a point inside them (`at`), walls optionally by side. */
 export type PlanSelection = { kind: 'wall' | 'opening' | 'room' | 'tour' | 'level'; id: string; side?: 'left' | 'right'; at?: [number, number] } | null
 

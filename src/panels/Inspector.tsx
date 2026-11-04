@@ -3,7 +3,7 @@ import { useMemo, useRef } from 'react'
 import ScrubField from '@/components/reactbits/ScrubField'
 import { cn } from '@/lib/cn'
 import { actions } from '@/lib/actions'
-import { analyse, add, dist, mul, norm, pointInPolygon, sub } from '@/plan/geometry'
+import { analyse, add, dist, mul, norm, pointInPolygon, sub, wallLength } from '@/plan/geometry'
 import { levelElevations, roomFor } from '@/plan/levels'
 import { DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, DEFAULT_WALL_FINISH, OPENING_DEFAULTS, type Finish, type OpeningKind, type RoomInfo, type Vec2 } from '@/plan/types'
 import { uid, useActiveProject, useWorkspace, type PlanData } from '@/store/workspace'
@@ -131,6 +131,20 @@ function WallInspector({ id, side }: { id: string; side?: 'left' | 'right' }) {
       <Cm label="Thickness" value={w.thickness} min={0.05} max={0.6} onChange={(t, f) => edit('Wall thickness', f, (p) => ({ ...p, walls: p.walls.map((x) => (x.id === id ? { ...x, thickness: t } : x)) }))} />
       <Cm label="Height" value={w.height ?? level.height} min={0.3} max={6} onChange={(h, f) => edit('Wall height', f, (p) => ({ ...p, walls: p.walls.map((x) => (x.id === id ? { ...x, height: Math.abs(h - level.height) < 0.005 ? undefined : h } : x)) }))} />
       <p className="ml-[100px] text-2xs leading-snug text-faint">Lower than the ceiling makes a half wall or railing.</p>
+      <Cm label="Curve" value={w.curve ?? 0} min={-L} max={L} onChange={(c, f) => edit('Curve wall', f, (p) => ({ ...p, walls: p.walls.map((x) => (x.id === id ? { ...x, curve: Math.abs(c) < 0.005 ? undefined : c } : x)) }))} />
+      <div className="ml-[100px] flex items-center gap-2 text-2xs text-faint">
+        {w.curve ? <span>Along the curve {(wallLength(w) * 100).toFixed(0)} cm</span> : <span>Drag the round handle in the plan to curve it.</span>}
+        {w.curve ? (
+          <>
+            <Button variant="ghost" className="h-5.5 px-1.5" onClick={() => edit('Half circle', true, (p) => ({ ...p, walls: p.walls.map((x) => (x.id === id ? { ...x, curve: (Math.sign(w.curve!) || 1) * (L / 2) } : x)) }))}>
+              Half circle
+            </Button>
+            <Button variant="ghost" className="h-5.5 px-1.5" onClick={() => edit('Straighten wall', true, (p) => ({ ...p, walls: p.walls.map((x) => (x.id === id ? { ...x, curve: undefined } : x)) }))}>
+              Straighten
+            </Button>
+          </>
+        ) : null}
+      </div>
       {sides.map((s) => (
         <div key={s} className="space-y-1.5 border-t border-line pt-2">
           <div className="flex items-center justify-between">

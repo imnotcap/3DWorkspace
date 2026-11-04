@@ -1,6 +1,6 @@
 // Walkthrough tours: a smooth path through the rooms, and the camera pose at any frame.
 import type { CameraPose, Project } from '@/store/workspace'
-import { analyse, add, dist, mul, pointInPolygon, type Face } from './geometry'
+import { analyse, add, dist, mul, pieceAt, pointInPolygon, type Face } from './geometry'
 import { levelElevations } from './levels'
 import { OPENING_DEFAULTS, type Tour, type TourPoint, type Vec2 } from './types'
 
@@ -123,11 +123,12 @@ export function autoTour(project: Project, levelId: string, uid: () => string): 
   const doors: Door[] = []
   for (const o of project.openings) {
     if (!OPENING_DEFAULTS[o.kind].door && o.kind !== 'french-window') continue
-    const g = geom.walls.get(o.wallId)
-    if (!g) continue
-    const seg = g.segments.find((s) => o.t >= s.u0 && o.t <= s.u1)
+    const at = pieceAt(geom, o.wallId, o.t)
+    if (!at) continue
+    const { g, u } = at
+    const seg = g.segments.find((s) => u >= s.u0 - 1e-6 && u <= s.u1 + 1e-6)
     if (!seg) continue
-    doors.push({ id: o.id, a: seg.left, b: seg.right, c: add(g.wall.a, mul(g.d, o.t)), n: g.n })
+    doors.push({ id: o.id, a: seg.left, b: seg.right, c: add(g.wall.a, mul(g.d, u)), n: g.n })
   }
   const adj = new Map<number, { to: number; door: Door }[]>()
   for (const d of doors)

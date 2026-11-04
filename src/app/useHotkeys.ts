@@ -29,6 +29,7 @@ export function useHotkeys() {
       switch (key) {
         case 'v': return s.setPlanTool('select')
         case 'w': return s.setPlanTool('wall')
+        case 'a': return s.setPlanTool('arc')
         case 'm': return s.setPlanTool('room')
         case 'd': return s.setPlanTool('door')
         case 'o': return s.setPlanTool('window')

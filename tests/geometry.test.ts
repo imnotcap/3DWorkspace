@@ -86,3 +86,25 @@ test('openings stay clear of the wall ends', () => {
   close(clampOpening(3.9, 0.9, 4), 3.5)
   close(clampOpening(2, 0.9, 4), 2)
 })
+
+test('a curved wall bows out by its curve and still closes the room', async () => {
+  const { arcOf, wallFrame, wallLength, projectOnWall } = await import('../src/plan/geometry.ts')
+  const ws = rect(0, 0, 4, 3)
+  // Bottom wall (4,3) → (0,3): bow it outwards (away from the room) by 1 m.
+  const bottom = ws[2]
+  const n = 'right' // the room is on the left of (4,3)→(0,3)? left normal of (-1,0) is (0,-1): towards the room
+  void n
+  const curved = { ...bottom, curve: -1 }
+  const arc = arcOf(curved)!
+  close(arc.r, (16 / 4 + 1) / 2) // r = (c²/4 + s²) / 2s = (4 + 1) / 2
+  const mid = wallFrame(curved, wallLength(curved) / 2).p
+  near(mid, [2, 4])
+  const g = analyse([ws[0], ws[1], curved, ws[3]])
+  assert.equal(g.faces.length, 1)
+  // Bigger than the 4 × 3 rectangle by about the circular segment (≈ 2.73 m² at the centreline).
+  assert.ok(g.faces[0].area > 3.8 * 2.8 + 2, `area ${g.faces[0].area}`)
+  assert.ok(g.pieces.get(curved.id)!.length >= 4)
+  const pr = projectOnWall([2, 4.5], curved)
+  close(pr.dist, 0.5, 1e-3)
+  close(pr.s, wallLength(curved) / 2, 1e-3)
+})

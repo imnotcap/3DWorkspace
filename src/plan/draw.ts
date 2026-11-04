@@ -2,7 +2,7 @@
 import { itemById } from '@/furniture/catalog'
 import type { SceneObject } from '@/store/workspace'
 import { footprint } from './footprint'
-import { add, clampOpening, mul, norm, sub, type PlanGeom } from './geometry'
+import { add, clampOpening, mul, norm, sub, wallFrame, wallIdOf, wallLength, wallPolyline, type PlanGeom } from './geometry'
 import { roomFor } from './levels'
 import { DEFAULT_FLOOR_FINISH, OPENING_DEFAULTS, type Opening, type RoomInfo, type Vec2, type Wall } from './types'
 
@@ -168,23 +168,43 @@ export function drawPlan(i: DrawInput): SvgNode[] {
 
   // Walls: solid footprints; openings punched through and drawn as symbols.
   for (const g of geom.walls.values()) {
-    const sel = i.selection?.kind === 'wall' && i.selection.id === g.wall.id
+    const id = wallIdOf(g.wall)
+    const sel = i.selection?.kind === 'wall' && i.selection.id === id
     out.push({
       tag: 'polygon',
-      attrs: { points: pts([g.la, g.lb, g.rb, g.ra]), fill: sel ? T.selected : T.wall, stroke: sel ? T.selected : T.wallStroke, 'stroke-width': px(0.5), ...(i.interactive ? { 'data-kind': 'wall', 'data-id': g.wall.id } : {}) },
+      attrs: { points: pts([g.la, g.lb, g.rb, g.ra]), fill: sel ? T.selected : T.wall, stroke: sel ? T.selected : T.wallStroke, 'stroke-width': px(0.5), ...(i.interactive ? { 'data-kind': 'wall', 'data-id': id } : {}) },
     })
   }
   for (const c of geom.caps) out.push({ tag: 'polygon', attrs: { points: pts(c), fill: T.wall, stroke: T.wall, 'stroke-width': px(0.5) } })
 
   for (const o of i.openings) {
+    const sel = i.selection?.kind === 'opening' && i.selection.id === o.id
     const g = geom.walls.get(o.wallId)
-    if (!g) continue
-    out.push(...openingSymbol(o, g.wall, g.d, g.n, g.h, g.len, T, px, i.selection?.kind === 'opening' && i.selection.id === o.id, !!i.interactive))
+    if (g) {
+      out.push(...openingSymbol(o, g.wall, g.d, g.n, g.h, g.len, T, px, sel, !!i.interactive))
+      continue
+    }
+    const w = i.walls.find((x) => x.id === o.wallId)
+    if (w && geom.pieces.has(w.id)) out.push(...curvedOpeningSymbol(o, w, w.thickness / 2, T, px, sel, !!i.interactive))
   }
 
-  // Wall lengths, outside each wall.
+  // Wall lengths, outside each wall (curved walls: their length along the curve, at the middle).
+  if (i.dimensions)
+    for (const w of i.walls) {
+      if (!geom.pieces.has(w.id)) continue
+      const L = wallLength(w)
+      const f = wallFrame(w, L / 2)
+      const pieces = geom.pieces.get(w.id)!
+      const mid = pieces[Math.floor(pieces.length / 2)]
+      const outside = mid.segments.some((sg) => sg.left === null) ? 1 : -1
+      const at = add(f.p, mul(f.n, outside * (w.thickness / 2 + px(11))))
+      let ang = (Math.atan2(f.d[1], f.d[0]) * 180) / Math.PI
+      if (ang > 90 || ang < -90) ang += 180
+      out.push({ tag: 'text', attrs: { x: at[0], y: at[1], 'font-size': px(10), 'font-family': T.font, fill: T.dim, 'text-anchor': 'middle', 'dominant-baseline': 'middle', transform: `rotate(${ang.toFixed(2)} ${at[0].toFixed(4)} ${at[1].toFixed(4)})`, 'pointer-events': 'none' }, text: `⌒ ${formatLength(L)}` })
+    }
   if (i.dimensions)
     for (const g of geom.walls.values()) {
+      if (g.wall.parentId) continue
       // Outside walls always; inside walls only when selected (else they crowd the room labels).
       const exterior = g.segments.some((s) => s.left === null || s.right === null)
       if (g.len < 0.3 || (!exterior && !(i.selection?.kind === 'wall' && i.selection.id === g.wall.id))) continue
@@ -261,6 +281,37 @@ function openingSymbol(o: Opening, w: Wall, d: Vec2, n: Vec2, h: number, len: nu
       const p1 = add(B, mul(n, off))
       nodes.push({ tag: 'line', attrs: { x1: p0[0], y1: p0[1], x2: p1[0], y2: p1[1], stroke, 'stroke-width': off === 0 ? sw * 0.8 : sw, 'pointer-events': 'none' } })
     }
+  }
+  return nodes
+}
+
+/** A door or window on a curved wall, drawn along the curve. */
+function curvedOpeningSymbol(o: Opening, w: Wall, h: number, T: PlanTheme, px: (n: number) => number, sel: boolean, interactive: boolean): SvgNode[] {
+  const L = wallLength(w)
+  const t = clampOpening(o.t, o.width, L)
+  const s0 = t - o.width / 2
+  const s1 = t + o.width / 2
+  const stroke = sel ? T.selected : T.opening
+  const sw = px(1.2)
+  const outer = wallPolyline(w, s0, s1, h + px(0.6))
+  const inner = wallPolyline(w, s0, s1, -h - px(0.6)).reverse()
+  const nodes: SvgNode[] = [{ tag: 'polygon', attrs: { points: pts([...outer, ...inner]), fill: T === PAPER_THEME ? '#ffffff' : '#141414', stroke: 'none', ...(interactive ? { 'data-kind': 'opening', 'data-id': o.id } : {}) } }]
+  for (const s of [s0, s1]) {
+    const f = wallFrame(w, s)
+    const p0 = add(f.p, mul(f.n, h))
+    const p1 = add(f.p, mul(f.n, -h))
+    nodes.push({ tag: 'line', attrs: { x1: p0[0], y1: p0[1], x2: p1[0], y2: p1[1], stroke, 'stroke-width': sw, 'pointer-events': 'none' } })
+  }
+  if (!OPENING_DEFAULTS[o.kind].door) {
+    for (const off of [h * 0.55, 0, -h * 0.55])
+      nodes.push({ tag: 'polyline', attrs: { points: pts(wallPolyline(w, s0, s1, off)), fill: 'none', stroke, 'stroke-width': off === 0 ? sw * 0.8 : sw, 'pointer-events': 'none' } })
+  } else {
+    // Doors: drawn straight across the opening (the leaf is flat), like on a straight wall.
+    const A = wallFrame(w, s0).p
+    const B = wallFrame(w, s1).p
+    const d = norm(sub(B, A))
+    const fake: Wall = { ...w, a: A, b: B, curve: undefined }
+    nodes.push(...openingSymbol({ ...o, t: Math.hypot(B[0] - A[0], B[1] - A[1]) / 2, width: Math.hypot(B[0] - A[0], B[1] - A[1]) }, fake, d, [-d[1], d[0]], h, Math.hypot(B[0] - A[0], B[1] - A[1]), T, px, sel, false).slice(1))
   }
   return nodes
 }

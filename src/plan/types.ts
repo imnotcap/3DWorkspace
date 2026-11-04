@@ -29,6 +29,19 @@ export interface Wall {
   height?: number
   /** Accent paint for one whole side (left = left of a → b), over the rooms' wall colour. */
   paint?: { left?: Finish; right?: Finish }
+  /**
+   * Curved wall: how far the middle of the wall bows out from the straight line a → b, in metres
+   * (positive = towards its left side). 0 or missing = straight. Half the length = a semicircle.
+   */
+  curve?: number
+  /** Set on the short straight pieces a curved wall is built from (analysis only, never saved). */
+  parentId?: string
+  /** Where this piece starts along its curved wall (arc length, m). */
+  s0?: number
+  /** Length of the curved wall this piece covers (arc length, m). */
+  sLen?: number
+  /** Centre of the curved wall's circle (for smooth shading). */
+  centre?: Vec2
 }
 
 export type OpeningKind = 'door' | 'double-door' | 'sliding-door' | 'window' | 'wide-window' | 'french-window' | 'archway'
