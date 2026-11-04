@@ -1,5 +1,5 @@
 import type { ViewTag } from '@/generation/types'
-import { DEFAULT_ANIMATION, useWorkspace, type Animation, type CameraPose, type RealSize, type MaterialOverride, type Project, type SceneObject, type ShadeMode, type Transform } from '@/store/workspace'
+import { DEFAULT_ANIMATION, useWorkspace, type Animation, type CameraPose, type ObjectKey, type RealSize, type MaterialOverride, type Project, type SceneObject, type ShadeMode, type Transform } from '@/store/workspace'
 
 /**
  * Projects, meshes and input photos survive reloads via IndexedDB.
@@ -20,6 +20,7 @@ interface StoredObject {
   shade?: ShadeMode
   material?: MaterialOverride | null
   fitSize?: RealSize | null
+  keys?: ObjectKey[]
 }
 interface StoredImage {
   id: string
@@ -73,7 +74,7 @@ async function save() {
       animation: p.animation,
       objects: p.objects.map((o) => {
         blobs.push([o.id, o.blob])
-        return { id: o.id, name: o.name, source: o.source, visible: o.visible, renderable: o.renderable, transform: o.transform, shade: o.shade, material: o.material, fitSize: o.fitSize ?? null }
+        return { id: o.id, name: o.name, source: o.source, visible: o.visible, renderable: o.renderable, transform: o.transform, shade: o.shade, material: o.material, fitSize: o.fitSize ?? null, keys: o.keys }
       }),
       images: p.images.map((i) => {
         blobs.push([i.id, i.file])

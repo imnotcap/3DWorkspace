@@ -61,7 +61,7 @@ Push to `main`. `.github/workflows/deploy.yml` builds and publishes to Pages. En
 | ⌘/Ctrl + Z, ⇧⌘/Ctrl + Z | Undo, redo (add, delete, transforms, shading, materials) |
 | 0 / Ctrl + Alt + 0 | Camera view / align camera to view |
 | Space, ← →, Shift + ← → | Play/pause, step frame, jump to start/end |
-| I / Alt + I | Insert / delete camera keyframe |
+| I / Alt + I | Insert / delete keyframe (selected object, or the camera) |
 | Ctrl + F12 | Render animation |
 | Shift + N | New project tab |
 
@@ -81,7 +81,8 @@ Transform fields in the Object panel (N) are drag-to-scrub: drag to change, Shif
 - **Render camera:** framed automatically (front three-quarter, slightly above, 50 mm), or set it from any view (Ctrl+Alt+0). Press **0** to look through it. Orbiting in camera view moves the camera itself.
 - **Reference overlay:** fades the Front photo over the camera frame so you can match the photo's angle. *Match photo aspect* sets the output to the photo's proportions at 4K.
 - **Resolution:** presets up to 4K UHD, square 4K and portrait 4K, or any custom size up to your GPU's limit. Optional transparent PNG.
-- **Timeline:** camera keyframes (I), ease or linear interpolation, playback (Space), and a one-click **Turntable** that loops seamlessly.
+- **Timeline:** keyframes for objects and the camera, Blender-style. Select an object and press **I** to key its location, rotation and scale at the current frame. With nothing selected, I keys the camera. Once an object has keys, moving, rotating or scaling it (gizmo or Object panel) updates the key at the current frame. Each animated object gets its own track. Ease or linear interpolation, playback (Space), and **Turntable**, which spins the selected object 360° (or orbits the camera) as a seamless loop.
+- Automatic framing covers the objects across the whole animation, so the camera doesn't zoom as things move.
 - **Render Animation (Ctrl+F12):** renders offline, frame by frame, at full output resolution, and encodes in the browser (WebCodecs: H.264 MP4, falling back to VP9/AV1/VP8). The output doesn't depend on viewport size or real-time FPS.
 - Renders always use the final look (materials, shadows), whatever the viewport shading is.
 

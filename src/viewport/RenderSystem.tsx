@@ -3,8 +3,9 @@ import { useEffect, useRef } from 'react'
 import { Color, MathUtils, PerspectiveCamera, Vector2, type Object3D } from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { activeProject, useWorkspace, type CameraPose } from '@/store/workspace'
+import { objectTransformAt } from '@/lib/anim'
 import { viewport } from './bridge'
-import { applyPose, defaultPose, evaluate, focalToFov, frameRect, orbitRadius, poseFromCamera, sceneBox } from './camera'
+import { applyPose, evaluate, focalToFov, framePose, frameRect, orbitRadius, poseFromCamera, sceneBox } from './camera'
 
 const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()))
 const yieldToUi = () => new Promise<void>((r) => setTimeout(r, 0))
@@ -14,12 +15,50 @@ function renderAspect() {
   return renderWidth / renderHeight
 }
 
-/** Render camera at `frame`: keyframes → static camera → automatic product framing. */
-function poseAt(frame: number): CameraPose {
+/** Put every keyed object where it is at `frame` (offline renders don't go through React). */
+function applyObjectsAt(frame: number) {
+  const p = activeProject(useWorkspace.getState())
+  for (const o of p.objects) {
+    const g = viewport.objects.get(o.id)
+    if (!g || !o.keys?.length) continue
+    const t = objectTransformAt(o, frame, p.animation.interpolation)
+    g.position.fromArray(t.position)
+    g.rotation.set(...t.rotation)
+    g.scale.fromArray(t.scale)
+  }
+}
+
+/**
+ * Automatic framing must not change while objects animate (the camera would pump in and out),
+ * so it frames the union of the objects' bounds across the whole animation range. Cached until
+ * the project or output aspect changes.
+ */
+let autoCache: { project: unknown; aspect: number; pose: CameraPose } | null = null
+function autoPose(): CameraPose {
   const s = useWorkspace.getState()
   const p = activeProject(s)
-  const fallback = p.camera ?? defaultPose([...viewport.objects.values()], renderAspect())
-  return evaluate(p.animation, frame, fallback)
+  const aspect = renderAspect()
+  if (autoCache && autoCache.project === p && autoCache.aspect === aspect) return autoCache.pose
+  const objects = [...viewport.objects.values()]
+  const box = sceneBox(objects)
+  if (p.objects.some((o) => o.keys?.length)) {
+    const { start, end } = p.animation
+    const samples = Math.min(24, end - start + 1)
+    for (let i = 0; i < samples; i++) {
+      applyObjectsAt(start + ((end - start) * i) / Math.max(1, samples - 1))
+      box.union(sceneBox(objects))
+    }
+    applyObjectsAt(s.frame)
+  }
+  const pose = framePose(box, { azimuth: MathUtils.degToRad(18), polar: MathUtils.degToRad(76), focal: 50 }, aspect)
+  autoCache = { project: p, aspect, pose }
+  return pose
+}
+
+/** Render camera at `frame`: keyframes → static camera → automatic product framing. */
+function poseAt(frame: number): CameraPose {
+  const p = activeProject(useWorkspace.getState())
+  return evaluate(p.animation, frame, p.camera ?? autoPose())
 }
 
 /**
@@ -31,7 +70,7 @@ export function RenderBridge() {
   const { gl, scene, invalidate } = useThree()
 
   useEffect(() => {
-    async function session<T>(opts: { transparent: boolean }, fn: (draw: (pose: CameraPose) => void, w: number, h: number) => Promise<T>) {
+    async function session<T>(opts: { transparent: boolean }, fn: (draw: (pose: CameraPose, frame: number) => void, w: number, h: number) => Promise<T>) {
       const s = useWorkspace.getState()
       const w = s.settings.renderWidth
       const h = s.settings.renderHeight
@@ -66,13 +105,15 @@ export function RenderBridge() {
       gl.setPixelRatio(1)
       gl.setSize(w, h, false)
       const cam = new PerspectiveCamera()
-      const draw = (pose: CameraPose) => {
+      const draw = (pose: CameraPose, frame: number) => {
+        applyObjectsAt(frame)
         applyPose(cam, pose, w / h)
         gl.render(scene, cam)
       }
       try {
         return await fn(draw, w, h)
       } finally {
+        applyObjectsAt(useWorkspace.getState().frame)
         gl.setPixelRatio(prevRatio)
         gl.setSize(prevSize.x, prevSize.y, false)
         scene.background = prevBg
@@ -88,7 +129,8 @@ export function RenderBridge() {
 
     viewport.renderStill = () =>
       session({ transparent: useWorkspace.getState().settings.transparent }, async (draw) => {
-        draw(poseAt(useWorkspace.getState().frame))
+        const f = useWorkspace.getState().frame
+        draw(poseAt(f), f)
         // toBlob snapshots the drawing buffer synchronously, before it's cleared.
         return new Promise<Blob | null>((res) => gl.domElement.toBlob(res, 'image/png'))
       })
@@ -114,7 +156,7 @@ export function RenderBridge() {
             await output.cancel()
             throw new DOMException('Cancelled', 'AbortError')
           }
-          draw(poseAt(anim.start + i))
+          draw(poseAt(anim.start + i), anim.start + i)
           ctx2d.drawImage(gl.domElement, 0, 0)
           await source.add(i / anim.fps, 1 / anim.fps)
           onFrame(i + 1, total)

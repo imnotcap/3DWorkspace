@@ -1,4 +1,5 @@
-import { Lock, Unlock } from 'lucide-react'
+import { Diamond, Lock, Unlock } from 'lucide-react'
+import { objectTransformAt } from '@/lib/anim'
 import { useRef, useState } from 'react'
 import ScrubField from '@/components/reactbits/ScrubField'
 import { SPACE_PRESETS, findPreset } from '@/generation/spaces'
@@ -146,14 +147,22 @@ function ObjectTab() {
   // One undo step per scrub gesture: checkpoint on its first change, close it on commit.
   const editing = useRef(false)
 
+  const frame = useWorkspace((s) => s.frame)
+  const interpolation = project.animation.interpolation
+
   if (!obj) return <p className="p-3 text-xs text-dim">Nothing selected.</p>
-  const t = obj.transform
+  // Keyed objects show (and edit) their value at the current frame; edits auto-key that frame.
+  const t = objectTransformAt(obj, frame, interpolation)
+  const keyed = !!obj.keys?.length
+  const onKey = obj.keys?.some((k) => k.frame === frame)
   const set = (patch: Partial<typeof t>) => {
     if (!editing.current) {
       checkpoint('Transform')
       editing.current = true
     }
-    updateObject(obj.id, { transform: { ...t, ...patch } })
+    const transform = { ...t, ...patch }
+    if (keyed) updateObject(obj.id, { transform, keys: [...obj.keys!.filter((k) => k.frame !== frame), { frame, transform }].sort((a, b) => a.frame - b.frame) })
+    else updateObject(obj.id, { transform })
   }
   const done = () => (editing.current = false)
 
@@ -161,6 +170,19 @@ function ObjectTab() {
     <div className="space-y-2.5 p-3">
       <Field label="Name">
         <input className={inputCls} value={obj.name} onChange={(e) => updateObject(obj.id, { name: e.target.value })} />
+      </Field>
+      <Field label="Animation" hint={keyed ? 'Moving, rotating or scaling now updates the key at this frame.' : 'Press I to key location, rotation and scale at this frame.'}>
+        <div className="flex items-center gap-1.5">
+          <Button className="h-6 gap-1.5 px-2" onClick={onKey ? actions.deleteKey : actions.insertKey}>
+            <Diamond className={onKey ? 'size-3 fill-warn text-warn' : 'size-3'} />
+            {onKey ? `Remove key · ${frame}` : `Key frame ${frame}`}
+          </Button>
+          {keyed && (
+            <Button variant="ghost" className="h-6 px-2" onClick={() => useWorkspace.getState().setObjectKeys(obj.id, [])}>
+              Clear ({obj.keys!.length})
+            </Button>
+          )}
+        </div>
       </Field>
       <VecField label="Location" value={t.position} step={0.01} min={-1000} max={1000} onChange={(position) => set({ position })} onCommit={done} />
       <VecField

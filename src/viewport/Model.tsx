@@ -3,7 +3,8 @@ import { invalidate, type ThreeEvent } from '@react-three/fiber'
 import { Component, memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
 import { Box3, Box3Helper, BufferGeometry, Color, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, Vector3, type Material, type Object3D } from 'three'
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh'
-import { scaleForSize, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
+import { objectTransformAt } from '@/lib/anim'
+import { activeProject, scaleForSize, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
 import { disposeSurface, reshade, surfaceFor } from './shading'
 
@@ -147,15 +148,20 @@ function ModelInner({ obj, selected, shading }: Props) {
   }, [root, shade])
 
   // Store → Object3D. The gizmo writes the Object3D directly while dragging and commits on release.
-  const { position, rotation, scale } = obj.transform
+  // Keyed objects follow the timeline; only they subscribe to the frame.
+  const keyed = !!obj.keys?.length
+  const frame = useWorkspace((s) => (keyed ? s.frame : 0))
+  const interpolation = useWorkspace((s) => activeProject(s).animation.interpolation)
   useLayoutEffect(() => {
     const g = group.current
     if (!g) return
-    g.position.fromArray(position)
-    g.rotation.set(...rotation)
-    g.scale.fromArray(scale)
+    const t = objectTransformAt(obj, frame, interpolation)
+    g.position.fromArray(t.position)
+    g.rotation.set(...t.rotation)
+    g.scale.fromArray(t.scale)
     invalidate()
-  }, [position, rotation, scale])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [obj.transform, obj.keys, frame, interpolation])
 
   useLayoutEffect(() => {
     const g = group.current

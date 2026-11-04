@@ -58,16 +58,27 @@ export function Timeline() {
   }, [])
 
   const span = Math.max(1, end - start)
-  const PAD = 12
-  const x = (f: number) => PAD + ((f - start) / span) * (width - PAD * 2)
-  const step = tickStep(span, width)
+  // Left gutter holds track names; frames map into the rest.
+  const PADL = 96
+  const PADR = 14
+  const x = (f: number) => PADL + ((f - start) / span) * (width - PADL - PADR)
+  const step = tickStep(span, width - PADL - PADR)
   const ticks: number[] = []
   for (let f = Math.ceil(start / step) * step; f <= end; f += step) ticks.push(f)
-  const onKey = keys.some((k) => k.frame === frame)
+  const selectedId = useWorkspace((s) => s.selectedId)
+  const selected = project.objects.find((o) => o.id === selectedId)
+  // Track list: camera, then every animated object, plus the selected one so you can key it.
+  const tracks = [
+    { id: null as string | null, name: 'Camera', keys: keys.map((k) => k.frame) },
+    ...project.objects.filter((o) => o.keys?.length || o.id === selectedId).map((o) => ({ id: o.id as string | null, name: o.name, keys: (o.keys ?? []).map((k) => k.frame) })),
+  ]
+  const target = selected ? selected.name : 'Camera'
+  const onKey = selected ? !!selected.keys?.some((k) => k.frame === frame) : keys.some((k) => k.frame === frame)
+  const anyKeys = tracks.some((t) => t.keys.length)
 
   const scrub = (e: RPointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
-    const f = Math.round(start + ((e.clientX - rect.left - PAD) / (rect.width - PAD * 2)) * span)
+    const f = Math.round(start + ((e.clientX - rect.left - PADL) / (rect.width - PADL - PADR)) * span)
     setFrame(Math.min(end, Math.max(start, f)))
   }
 
@@ -113,17 +124,18 @@ export function Timeline() {
         <span className="ml-1 font-mono text-2xs text-faint">{((end - start + 1) / fps).toFixed(1)}s</span>
 
         <div className="flex-1" />
-        <Tooltip label={onKey ? 'Replace Keyframe' : 'Insert Keyframe'} shortcut="I" side="top">
+        <span className="mr-1 max-w-40 truncate text-2xs text-dim">Keying · <span className="text-fg">{target}</span></span>
+        <Tooltip label={onKey ? `Replace Keyframe · ${target}` : `Insert Keyframe · ${target}`} shortcut="I" side="top">
           <IconButton aria-label="Insert keyframe" onClick={actions.insertKey}>
             <Diamond className={cn('size-3.5', onKey && 'fill-warn text-warn')} />
           </IconButton>
         </Tooltip>
-        <Tooltip label="Delete Keyframe" shortcut="Alt I" side="top">
+        <Tooltip label={`Delete Keyframe · ${target}`} shortcut="Alt I" side="top">
           <IconButton aria-label="Delete keyframe" disabled={!onKey} onClick={actions.deleteKey}>
             <Trash2 className="size-3.5" />
           </IconButton>
         </Tooltip>
-        <Tooltip label="Turntable (360° orbit)" side="top">
+        <Tooltip label={selected ? `Turntable · spin ${selected.name} 360°` : 'Turntable · orbit camera 360°'} side="top">
           <IconButton aria-label="Turntable" onClick={actions.turntable}>
             <RotateCw className="size-3.5" />
           </IconButton>
@@ -160,23 +172,33 @@ export function Timeline() {
         {ticks.map((f) => (
           <div key={f} className="pointer-events-none absolute bottom-0 top-5 w-px bg-line/70" style={{ left: x(f) }} />
         ))}
-        {/* camera track */}
-        <div className="absolute inset-x-0 top-8 flex h-5 items-center">
-          <span className="pointer-events-none absolute left-2 z-10 text-2xs text-faint">Camera</span>
-          {keys.map((k) => (
-            <button
-              key={k.frame}
-              type="button"
-              aria-label={`Keyframe ${k.frame}`}
-              onPointerDown={(e) => (e.stopPropagation(), setFrame(k.frame))}
-              className="absolute size-2.5 -translate-x-1/2 rotate-45 rounded-[2px] border border-black/60 transition-transform hover:scale-125"
-              style={{ left: x(k.frame), background: k.frame === frame ? '#f5a524' : '#d6d6d6' }}
-            />
-          ))}
-        </div>
-        {keys.length === 0 && (
+        {/* tracks */}
+        {tracks.map((t, row) => {
+          const active = t.id === (selectedId ?? null) || (t.id === null && !selected)
+          return (
+            <div key={t.id ?? 'camera'} className="absolute inset-x-0 flex h-5 items-center" style={{ top: 24 + row * 22 }}>
+              <span className={cn('pointer-events-none absolute left-2 z-10 w-20 truncate text-2xs', active ? 'text-fg' : 'text-faint')}>{t.name}</span>
+              {active && <div className="pointer-events-none absolute inset-0 bg-white/[0.025]" />}
+              {t.keys.map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  aria-label={`${t.name} keyframe ${f}`}
+                  onPointerDown={(e) => {
+                    e.stopPropagation()
+                    setFrame(f)
+                    useWorkspace.getState().select(t.id)
+                  }}
+                  className="absolute size-2.5 -translate-x-1/2 rotate-45 rounded-[2px] border border-black/60 transition-transform hover:scale-125"
+                  style={{ left: x(f), background: f === frame && active ? '#f5a524' : '#d6d6d6' }}
+                />
+              ))}
+            </div>
+          )
+        })}
+        {!anyKeys && (
           <p className="pointer-events-none absolute inset-x-0 bottom-2 text-center text-2xs text-faint">
-            No keyframes. Frame a shot and press I, or use Turntable.
+            Select an object and press I to key it at this frame. With nothing selected, I keys the camera. Turntable makes a 360° loop.
           </p>
         )}
         {/* playhead */}

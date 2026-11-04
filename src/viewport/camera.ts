@@ -58,14 +58,6 @@ export function evaluate(anim: Animation, frame: number, fallback: CameraPose): 
   return lerpPose(a.pose, b.pose, anim.interpolation === 'linear' ? t : smooth(t))
 }
 
-/**
- * Default product shot: front three-quarter, slightly above, 50mm, framed to fit.
- * Generated meshes face +Z, so azimuth 0 looks at the front.
- */
-export function defaultPose(objects: Object3D[], aspect: number): CameraPose {
-  return framePose(sceneBox(objects), { azimuth: MathUtils.degToRad(18), polar: MathUtils.degToRad(76), focal: 50 }, aspect)
-}
-
 const corners = Array.from({ length: 8 }, () => new Vector3())
 const probe = new PerspectiveCamera()
 

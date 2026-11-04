@@ -46,6 +46,11 @@ export interface CameraPose {
   focal: number
 }
 
+export interface ObjectKey {
+  frame: number
+  transform: Transform
+}
+
 export interface CameraKey {
   frame: number
   pose: CameraPose
@@ -73,6 +78,8 @@ export interface SceneObject {
   shade: ShadeMode
   material: MaterialOverride | null
   stats?: MeshStats
+  /** Transform keyframes; when present they drive the object instead of `transform`. */
+  keys?: ObjectKey[]
   /** Scale to this real size once the mesh has loaded (from the project's spec dimensions). */
   fitSize?: RealSize | null
   error?: string
@@ -179,6 +186,9 @@ interface WorkspaceState {
   // camera + animation (active project)
   setCamera: (pose: CameraPose | null) => void
   setRealSize: (size: RealSize | null) => void
+  setObjectKey: (id: string, frame: number, transform: Transform, label?: string) => void
+  removeObjectKey: (id: string, frame: number) => void
+  setObjectKeys: (id: string, keys: ObjectKey[]) => void
   updateAnimation: (patch: Partial<Animation>) => void
   setKey: (frame: number, pose: CameraPose) => void
   removeKey: (frame: number) => void
@@ -401,6 +411,26 @@ export const useWorkspace = create<WorkspaceState>()(
 
       setCamera: (camera) => set((s) => patchActive(s, (p) => ({ ...p, camera }))),
       setRealSize: (realSize) => set((s) => patchActive(s, (p) => ({ ...p, realSize }))),
+      // Object keys live on the object, so they are part of undo snapshots.
+      setObjectKey: (id, frame, transform, label = 'Keyframe') => {
+        get().checkpoint(label)
+        set((s) =>
+          patchActive(s, (p) => ({
+            ...p,
+            objects: p.objects.map((o) =>
+              o.id === id ? { ...o, transform, keys: [...(o.keys ?? []).filter((k) => k.frame !== frame), { frame, transform }].sort((a, b) => a.frame - b.frame) } : o,
+            ),
+          })),
+        )
+      },
+      removeObjectKey: (id, frame) => {
+        get().checkpoint('Delete Keyframe')
+        set((s) => patchActive(s, (p) => ({ ...p, objects: p.objects.map((o) => (o.id === id ? { ...o, keys: (o.keys ?? []).filter((k) => k.frame !== frame) } : o)) })))
+      },
+      setObjectKeys: (id, keys) => {
+        get().checkpoint('Keyframes')
+        set((s) => patchActive(s, (p) => ({ ...p, objects: p.objects.map((o) => (o.id === id ? { ...o, keys } : o)) })))
+      },
       updateAnimation: (patch) => set((s) => patchActive(s, (p) => ({ ...p, animation: { ...p.animation, ...patch } }))),
       setKey: (frame, pose) =>
         set((s) =>
