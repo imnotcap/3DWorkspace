@@ -1,12 +1,17 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { Aperture, Grid3x3, Hash, Layers, SlidersHorizontal, X } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { cancelGeneration } from '@/generation/run'
 import { actions } from '@/lib/actions'
 import { cn } from '@/lib/cn'
 import { useActiveProject, useWorkspace, type PropertyTab, type ShadingMode } from '@/store/workspace'
+import { viewport } from '@/viewport/bridge'
+import { frameRect } from '@/lib/frame'
 import { Button, IconButton, Menu, Tooltip, ease } from '@/ui/primitives'
-import { PropertiesPanel } from './Properties'
+import CountUp from '@/components/reactbits/CountUp'
+import ShinyText from '@/components/reactbits/ShinyText'
+
+const PropertiesPanel = lazy(() => import('./Properties').then((m) => ({ default: m.PropertiesPanel })))
 
 /* ───────── Header pill (View / Select / Add / Object) ───────── */
 
@@ -14,6 +19,8 @@ export function ViewportHeader() {
   const selectedId = useWorkspace((s) => s.selectedId)
   const showGrid = useWorkspace((s) => s.settings.showGrid)
   const showStats = useWorkspace((s) => s.settings.showStats)
+  const showTimeline = useWorkspace((s) => s.settings.showTimeline)
+  const cameraView = useWorkspace((s) => s.cameraView)
   const project = useActiveProject()
   const { updateSettings, select, setPropertyTab } = useWorkspace.getState()
 
@@ -31,6 +38,10 @@ export function ViewportHeader() {
           { separator: true, label: '' },
           { label: 'Grid', checked: showGrid, onSelect: () => updateSettings({ showGrid: !showGrid }) },
           { label: 'Statistics', checked: showStats, onSelect: () => updateSettings({ showStats: !showStats }) },
+          { label: 'Timeline', checked: showTimeline, onSelect: () => updateSettings({ showTimeline: !showTimeline }) },
+          { separator: true, label: '' },
+          { label: 'Camera View', shortcut: '0', checked: cameraView, onSelect: actions.toggleCameraView },
+          { label: 'Align Camera to View', shortcut: '⌃⌥0', onSelect: actions.cameraFromView },
           { label: 'Cycle Shading', shortcut: 'Z', onSelect: actions.cycleShading },
         ]}
       />
@@ -147,7 +158,7 @@ export function ViewportSideStrip() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 6, transition: { duration: 0.1 } }}
             transition={{ duration: 0.16, ease }}
-            className="absolute right-13 top-2 z-20 w-72 overflow-hidden rounded-xl border border-white/[0.06] bg-panel-2/92 shadow-2xl shadow-black/60 backdrop-blur-lg"
+            className="absolute right-13 top-2 z-20 max-h-[calc(100%-1rem)] w-80 overflow-y-auto rounded-xl border border-white/[0.06] bg-panel-2/92 shadow-2xl shadow-black/60 backdrop-blur-lg"
           >
             <div className="flex h-8 items-center justify-between border-b border-line pl-3 pr-1">
               <span className="text-xs font-medium text-fg">{TABS.find((t) => t.id === tab)?.label}</span>
@@ -155,7 +166,9 @@ export function ViewportSideStrip() {
                 <X className="size-3" />
               </IconButton>
             </div>
-            <PropertiesPanel tab={tab} />
+            <Suspense fallback={<div className="h-24" />}>
+              <PropertiesPanel tab={tab} />
+            </Suspense>
           </motion.div>
         )}
       </AnimatePresence>
@@ -165,26 +178,24 @@ export function ViewportSideStrip() {
 
 /* ───────── Stats (bottom-left) ───────── */
 
-const fmt = (n: number) => n.toLocaleString('en-US')
-
 export function StatsOverlay() {
   const show = useWorkspace((s) => s.settings.showStats)
   const project = useActiveProject()
   if (!show) return null
-  const visible = project.objects.filter((o) => o.visible)
+  const visible = project.objects.filter((o) => o.visible && !o.error)
   const v = visible.reduce((a, o) => a + (o.stats?.vertices ?? 0), 0)
   const t = visible.reduce((a, o) => a + (o.stats?.triangles ?? 0), 0)
-  const rows: [string, string][] = [
-    ['Objects', `${visible.length}`],
-    ['Vertices', fmt(v)],
-    ['Triangles', fmt(t)],
+  const rows: [string, number][] = [
+    ['Objects', visible.length],
+    ['Vertices', v],
+    ['Triangles', t],
   ]
   return (
     <div className="pointer-events-none absolute bottom-3 left-3 z-10 grid grid-cols-[auto_auto] gap-x-6 gap-y-0.5 font-mono text-2xs tabular">
       {rows.map(([k, val]) => (
         <div key={k} className="contents">
           <span className="text-faint">{k}</span>
-          <span className="text-dim">{val}</span>
+          <CountUp to={val} duration={0.6} separator="," trigger="load" className="text-dim" />
         </div>
       ))}
     </div>
@@ -223,7 +234,7 @@ export function JobCard() {
           {job.status === 'running' && (
             <>
               <div className="mb-2 flex items-center justify-between text-xs">
-                <span className="truncate text-fg">{job.message}</span>
+                <ShinyText text={job.message} color="#a3a3a3" shineColor="#ffffff" speed={2.4} className="truncate" />
                 <span className="ml-3 shrink-0 font-mono text-2xs tabular text-faint">{((now - job.startedAt) / 1000).toFixed(0)}s</span>
               </div>
               <div className="relative h-1 overflow-hidden rounded-full bg-app">
@@ -291,6 +302,88 @@ export function EmptyState({ dragging }: { dragging: boolean }) {
           >
             <span className="text-sm text-fg">{dragging ? 'Release to add' : 'Drop reference images'}</span>
             <span className="text-2xs text-dim">Photos go to Inputs · .glb files import directly</span>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  )
+}
+
+/* ───────── Camera frame (passepartout + reference photo) ───────── */
+
+export function CameraFrame() {
+  const active = useWorkspace((s) => s.cameraView)
+  const w = useWorkspace((s) => s.settings.renderWidth)
+  const h = useWorkspace((s) => s.settings.renderHeight)
+  const refOpacity = useWorkspace((s) => s.settings.refOpacity)
+  const project = useActiveProject()
+  const keyed = project.animation.keys.length > 0
+  const front = project.images.find((i) => i.view === 'front')
+  const focal = useWorkspace((s) => (s.cameraView ? (viewport.renderPose()?.focal ?? 50) : 50))
+  const box = useRef<HTMLDivElement>(null)
+  const [vp, setVp] = useState({ w: 0, h: 0 })
+
+  useEffect(() => {
+    const el = box.current?.parentElement
+    if (!el) return
+    const ro = new ResizeObserver(([e]) => setVp({ w: e.contentRect.width, h: e.contentRect.height }))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const r = frameRect(vp.w, vp.h, w / h)
+  return (
+    <div ref={box} className="pointer-events-none absolute inset-0 z-[5]">
+      <AnimatePresence>
+        {active && vp.w > 0 && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="absolute outline outline-1 outline-white/25"
+            style={{ left: r.x, top: r.y, width: r.w, height: r.h, boxShadow: '0 0 0 9999px rgba(0,0,0,0.55)' }}
+          >
+            {front && refOpacity > 0 && <img src={front.url} alt="" className="size-full object-contain" style={{ opacity: refOpacity }} />}
+            <span className="absolute -top-5 left-0 font-mono text-2xs text-dim">
+              Camera · {w}×{h} · {Math.round(focal)}mm{keyed ? ' · keyed' : ' · drag to frame'}
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/* ───────── Render progress ───────── */
+
+export function RenderProgress() {
+  const job = useWorkspace((s) => s.renderJob)
+  return (
+    <AnimatePresence>
+      {job && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.15 }}
+          className="absolute inset-0 z-40 grid place-items-center bg-app/80 backdrop-blur-sm"
+        >
+          <div className="w-96 rounded-xl border border-white/[0.06] bg-panel-2 p-4 shadow-2xl shadow-black/60">
+            <div className="mb-2.5 flex items-center justify-between text-xs">
+              <ShinyText text={job.kind === 'video' ? 'Rendering animation' : 'Rendering image'} color="#d6d6d6" shineColor="#ffffff" speed={2.4} />
+              <span className="font-mono text-2xs tabular text-dim">{job.message}</span>
+            </div>
+            <div className="h-1 overflow-hidden rounded-full bg-app">
+              <motion.div className="h-full rounded-full bg-accent" animate={{ width: `${(job.done / job.total) * 100}%` }} transition={{ duration: 0.2, ease }} />
+            </div>
+            {job.kind === 'video' && (
+              <div className="mt-3 flex justify-end">
+                <Button variant="ghost" className="h-6 px-2" onClick={actions.cancelRender}>
+                  Cancel
+                </Button>
+              </div>
+            )}
           </div>
         </motion.div>
       )}

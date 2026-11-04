@@ -6,6 +6,10 @@ let controller: AbortController | null = null
 // Providers load on first use so @gradio/client stays out of the initial bundle.
 async function makeProvider(): Promise<Provider> {
   const { settings } = useWorkspace.getState()
+  if (settings.providerId === 'photogrammetry') {
+    const { createPhotogrammetryProvider } = await import('./providers/photogrammetry')
+    return createPhotogrammetryProvider({ url: settings.photogrammetryUrl })
+  }
   if (settings.providerId === 'local-worker') {
     const { createLocalWorkerProvider } = await import('./providers/localWorker')
     return createLocalWorkerProvider({ url: settings.workerUrl })
@@ -47,9 +51,9 @@ export async function startGeneration() {
       },
     )
     const s = useWorkspace.getState()
-    // The user may have switched tabs while waiting; put the mesh where it was requested.
-    if (s.activeProjectId !== projectId) s.setActiveProject(projectId)
-    s.addObject({ name: 'Mesh', url: URL.createObjectURL(result.glb), source: result.source })
+    // The user may have switched tabs while waiting; the mesh goes where it was requested.
+    const realSize = s.projects.find((p) => p.id === projectId)?.realSize
+    s.addObject({ name: result.source === 'Photogrammetry' ? 'Scan' : 'Mesh', blob: result.glb, source: result.source, fitSize: realSize }, projectId)
     const secs = ((performance.now() - startedAt) / 1000).toFixed(1)
     s.setJob({ status: 'done', message: `Generated in ${secs}s · ${result.source}` })
   } catch (e) {
@@ -62,11 +66,11 @@ export async function startGeneration() {
   }
 }
 
-/** Import a .glb/.gltf from disk straight into the scene. */
+/** Import .glb files from disk straight into the scene. */
 export function importModelFiles(files: File[]) {
   const s = useWorkspace.getState()
   for (const f of files) {
     if (!/\.glb$/i.test(f.name)) continue
-    s.addObject({ name: f.name.replace(/\.(glb|gltf)$/i, ''), url: URL.createObjectURL(f), source: 'Imported' })
+    s.addObject({ name: f.name.replace(/\.glb$/i, ''), blob: f, source: 'Imported' })
   }
 }

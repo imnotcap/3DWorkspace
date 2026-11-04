@@ -1,6 +1,6 @@
 import { ContactShadows, GizmoHelper, GizmoViewport, Grid, OrbitControls, TransformControls } from '@react-three/drei'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AgXToneMapping,
   Box3,
@@ -18,9 +18,10 @@ import {
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import { useActiveProject, useWorkspace, type ShadingMode } from '@/store/workspace'
+import { useActiveProject, useWorkspace, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
 import { Model, withOriginalMaterials } from './Model'
+import { CameraView, RenderBridge } from './RenderSystem'
 
 const AXIS_X = '#e5484d'
 const AXIS_Z = '#3e63dd'
@@ -116,11 +117,15 @@ function CameraRig() {
       invalidate()
     }
     viewport.frameSelected = () => {
+      useWorkspace.getState().setCameraView(false)
       const id = useWorkspace.getState().selectedId
       const o = id ? viewport.objects.get(id) : undefined
       fit(o ? [o] : [...viewport.objects.values()])
     }
-    viewport.frameAll = () => fit([...viewport.objects.values()])
+    viewport.frameAll = () => {
+      useWorkspace.getState().setCameraView(false)
+      fit([...viewport.objects.values()])
+    }
   }, [camera, controls, invalidate])
 
   useFrame((_, dt) => {
@@ -137,30 +142,11 @@ function CameraRig() {
   return null
 }
 
-/** Registers capture/export so menus and hotkeys can call them. */
+/** Registers export so menus and hotkeys can call it. */
 function Bridge() {
   const { gl, scene, camera, invalidate } = useThree()
   useEffect(() => {
     viewport.invalidate = invalidate
-    viewport.capture = async (scale = 2) => {
-      const hidden: Object3D[] = []
-      scene.traverse((o) => {
-        const hide = o.visible && (o.name.startsWith('__') || o.userData.renderable === false)
-        if (hide) {
-          o.visible = false
-          hidden.push(o)
-        }
-      })
-      const prev = gl.getPixelRatio()
-      gl.setPixelRatio(Math.min(prev * scale, 4))
-      gl.render(scene, camera)
-      // toBlob snapshots the bitmap synchronously, before the buffer is cleared.
-      const blob = await new Promise<Blob | null>((res) => gl.domElement.toBlob(res, 'image/png'))
-      gl.setPixelRatio(prev)
-      hidden.forEach((o) => (o.visible = true))
-      invalidate()
-      return blob
-    }
     viewport.exportGlb = async (id) => {
       const target = viewport.objects.get(id)
       if (!target) return null
@@ -178,6 +164,20 @@ function Bridge() {
     }
   }, [gl, scene, camera, invalidate])
   return null
+}
+
+const TOOL_LABEL = { translate: 'Move', rotate: 'Rotate', scale: 'Scale' } as const
+
+/** Gizmo release → one undoable store update. */
+function commitTransform(o: Object3D, tool: keyof typeof TOOL_LABEL) {
+  const id = o.userData.id as string
+  useWorkspace.getState().commit(TOOL_LABEL[tool], id, {
+    transform: {
+      position: o.position.toArray() as Vec3,
+      rotation: [o.rotation.x, o.rotation.y, o.rotation.z],
+      scale: o.scale.toArray() as Vec3,
+    },
+  })
 }
 
 function SceneContent() {
@@ -213,11 +213,9 @@ function SceneContent() {
         shadow-camera-bottom={-4}
       />
 
-      <Suspense fallback={null}>
-        {project.objects.map((o) => (
-          <Model key={o.id} obj={o} selected={o.id === selectedId} shading={shading} />
-        ))}
-      </Suspense>
+      {project.objects.map((o) => (
+        <Model key={o.id} obj={o} selected={o.id === selectedId} shading={shading} />
+      ))}
 
       {rendered && <ContactShadows position={[0, 0.001, 0]} opacity={0.55} scale={12} blur={2.4} far={4} resolution={512} />}
 
@@ -227,7 +225,7 @@ function SceneContent() {
             <Grid
               raycast={() => {}}
               infiniteGrid
-              cellSize={0.25}
+              cellSize={0.1}
               sectionSize={1}
               cellThickness={0.6}
               sectionThickness={1}
@@ -240,7 +238,7 @@ function SceneContent() {
           </>
         )}
         {target && tool !== 'select' && (
-          <TransformControls object={target} mode={tool} size={0.8} onChange={() => invalidate()} />
+          <TransformControls object={target} mode={tool} size={0.8} onChange={() => invalidate()} onMouseUp={() => commitTransform(target, tool)} />
         )}
       </group>
     </>
@@ -267,6 +265,8 @@ export function Viewport() {
       <SceneContent />
       <CameraRig />
       <Bridge />
+      <RenderBridge />
+      <CameraView />
       <OrbitControls
         makeDefault
         enableDamping

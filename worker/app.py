@@ -10,6 +10,9 @@ Contract (matches src/generation/providers/localWorker.ts):
 Runs Hunyuan3D-2 (open weights) through Tencent's `hy3dgen` package.
 MODEL=mv   multi-view shape model (default, uses front/back/left/right)
 MODEL=mini single-image, lighter (~6 GB VRAM)
+TEXTURE=1  paint a color texture from the Front image (default; ~+8 GB VRAM, +1 min)
+
+Images tagged "detail" are ignored: they are close-ups, not views of the whole object.
 """
 
 from __future__ import annotations
@@ -43,11 +46,19 @@ QUALITY = {
     "draft": {"steps": 20, "octree": 192, "faces": 40_000},
     "standard": {"steps": 30, "octree": 256, "faces": 120_000},
     "high": {"steps": 50, "octree": 384, "faces": 300_000},
+    "ultra": {"steps": 50, "octree": 512, "faces": 600_000},
 }
+TEXTURE = os.getenv("TEXTURE", "1") == "1"
+VIEWS = ("front", "back", "left", "right")
 
 repo, subfolder = MODELS[MODEL]
 pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(repo, subfolder=subfolder, use_safetensors=True, device="cuda")
 rembg = BackgroundRemover()
+painter = None
+if TEXTURE:
+    from hy3dgen.texgen import Hunyuan3DPaintPipeline
+
+    painter = Hunyuan3DPaintPipeline.from_pretrained("tencent/Hunyuan3D-2")
 gpu_lock = threading.Lock()  # one job at a time on a single GPU
 
 app = FastAPI(title="3D Workspace worker")
@@ -70,7 +81,7 @@ async def private_network_access(request: Request, call_next):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "model": repo}
+    return {"ok": True, "model": repo, "texture": TEXTURE}
 
 
 def load(upload: UploadFile, remove_bg: bool) -> Image.Image:
@@ -89,22 +100,15 @@ def generate(
     if not images:
         raise HTTPException(400, "No images")
     q = QUALITY.get(quality, QUALITY["standard"])
-    loaded = [load(f, remove_background) for f in images]
-    tags = (views + ["auto"] * len(loaded))[: len(loaded)]
+    tags = (views + ["detail"] * len(images))[: len(images)]
+    slots: dict[str, Image.Image] = {}
+    for upload, tag in zip(images, tags):
+        if tag in VIEWS and tag not in slots:
+            slots[tag] = load(upload, remove_background)
+    if "front" not in slots:
+        raise HTTPException(400, "Tag one image as Front")
 
-    if MODEL == "mv":
-        slots: dict[str, Image.Image] = {}
-        for img, tag in zip(loaded, tags):
-            if tag in ("front", "back", "left", "right") and tag not in slots:
-                slots[tag] = img
-        for img, tag in zip(loaded, tags):
-            if tag == "auto":
-                free = next((v for v in ("front", "back", "left", "right") if v not in slots), None)
-                if free:
-                    slots[free] = img
-        image_arg: object = slots
-    else:
-        image_arg = loaded[0]
+    image_arg: object = slots if MODEL == "mv" else slots["front"]
 
     generator = torch.Generator("cuda").manual_seed(seed if seed is not None else random.randint(0, 2**31 - 1))
     with gpu_lock:
@@ -120,6 +124,10 @@ def generate(
     mesh = FloaterRemover()(mesh)
     mesh = DegenerateFaceRemover()(mesh)
     mesh = FaceReducer()(mesh, max_facenum=q["faces"])
+
+    if painter is not None:
+        with gpu_lock:
+            mesh = painter(mesh, image=slots["front"])
 
     with tempfile.NamedTemporaryFile(suffix=".glb") as tmp:
         mesh.export(tmp.name)

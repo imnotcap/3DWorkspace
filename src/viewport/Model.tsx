@@ -1,14 +1,23 @@
 import { useGLTF } from '@react-three/drei'
 import { invalidate, type ThreeEvent } from '@react-three/fiber'
-import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
-import { Box3, Box3Helper, Color, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, Vector3, type Material } from 'three'
-import { useWorkspace, type SceneObject, type ShadingMode } from '@/store/workspace'
+import { Component, memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
+import { Box3, Box3Helper, BufferGeometry, Color, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, Vector3, type Material, type Object3D } from 'three'
+import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh'
+import { scaleForSize, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
+import { disposeSurface, reshade, surfaceFor } from './shading'
+
+// BVH-accelerated raycasting: picking a 1M-triangle mesh stays sub-millisecond.
+BufferGeometry.prototype.computeBoundsTree = computeBoundsTree
+BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree
+Mesh.prototype.raycast = acceleratedRaycast
 
 const SOLID = new MeshStandardMaterial({ color: '#bcbcbc', roughness: 0.62, metalness: 0 })
 const WIRE = new MeshBasicMaterial({ color: '#9a9a9a', wireframe: true })
 const SELECT_COLOR = new Color('#4c8dff')
 const FIT_SIZE = 2
+
+const idle = (fn: () => void) => ('requestIdleCallback' in window ? requestIdleCallback(fn, { timeout: 2000 }) : setTimeout(fn, 200))
 
 function materialFor(mode: ShadingMode, original: Material | Material[]) {
   if (mode === 'wireframe') return WIRE
@@ -16,7 +25,13 @@ function materialFor(mode: ShadingMode, original: Material | Material[]) {
   return original
 }
 
-export const Model = memo(function Model({ obj, selected, shading }: { obj: SceneObject; selected: boolean; shading: ShadingMode }) {
+interface Props {
+  obj: SceneObject
+  selected: boolean
+  shading: ShadingMode
+}
+
+function ModelInner({ obj, selected, shading }: Props) {
   const gltf = useGLTF(obj.url, true, true)
   const group = useRef<Group>(null)
 
@@ -26,7 +41,7 @@ export const Model = memo(function Model({ obj, selected, shading }: { obj: Scen
     const v = new Vector3()
     const box = new Box3().setFromObject(root)
     const max = Math.max(...box.getSize(v).toArray()) || 1
-    root.scale.setScalar(FIT_SIZE / max)
+    root.scale.multiplyScalar(FIT_SIZE / max)
     root.updateMatrixWorld(true)
     box.setFromObject(root)
     const c = box.getCenter(v)
@@ -34,15 +49,26 @@ export const Model = memo(function Model({ obj, selected, shading }: { obj: Scen
     root.updateMatrixWorld(true)
     box.setFromObject(root)
     root.traverse((o) => {
-      if ((o as Mesh).isMesh) {
-        const m = o as Mesh
-        m.userData.original = m.material
-        m.castShadow = m.receiveShadow = true
-        m.geometry.computeBoundingSphere()
-      }
+      const m = o as Mesh
+      if (!m.isMesh) return
+      m.userData.original = m.material
+      m.userData.surface = m.material
+      m.userData.geos = { original: m.geometry }
+      m.castShadow = m.receiveShadow = true
     })
     return { root, box }
   }, [gltf])
+
+  // Build BVHs when the main thread is idle, so loading never hitches.
+  useEffect(() => {
+    const handle = idle(() =>
+      root.traverse((o) => {
+        const m = o as Mesh
+        if (m.isMesh && !m.geometry.boundsTree) m.geometry.computeBoundsTree()
+      }),
+    )
+    return () => ('cancelIdleCallback' in window ? cancelIdleCallback(handle as number) : clearTimeout(handle as number))
+  }, [root])
 
   const helper = useMemo(() => {
     const h = new Box3Helper(box, SELECT_COLOR)
@@ -67,16 +93,69 @@ export const Model = memo(function Model({ obj, selected, shading }: { obj: Scen
       vertices += pos.count
       triangles += (m.geometry.index ? m.geometry.index.count : pos.count) / 3
     })
-    useWorkspace.getState().updateObject(obj.id, { stats: { vertices, triangles: Math.round(triangles), meshes } })
-  }, [root, obj.id])
+    const size = box.getSize(new Vector3()).toArray() as Vec3
+    const st = useWorkspace.getState()
+    st.updateObject(obj.id, { stats: { vertices, triangles: Math.round(triangles), meshes, size } })
+    // Spec dimensions requested at generation time: apply once, now that the real bounds are known.
+    const current = st.projects.flatMap((p) => p.objects).find((o) => o.id === obj.id)
+    if (current?.fitSize) {
+      st.updateObject(obj.id, { fitSize: null, transform: { ...current.transform, scale: scaleForSize(size, current.fitSize, current.transform.scale) } })
+    }
+  }, [root, box, obj.id])
 
+  // Surface = generated material, or the user's override. Viewport shading picks what's displayed.
+  const override = obj.material
   useLayoutEffect(() => {
     root.traverse((o) => {
       const m = o as Mesh
-      if (m.isMesh) m.material = materialFor(shading, m.userData.original)
+      if (!m.isMesh) return
+      disposeSurface(m)
+      m.userData.surface = surfaceFor(m.userData.original, override)
+      m.material = materialFor(shading, m.userData.surface)
     })
     invalidate()
-  }, [root, shading])
+  }, [root, shading, override])
+
+  // Shade Smooth / Auto Smooth: normals rebuilt in a worker, cached per mode.
+  const shade = obj.shade
+  useEffect(() => {
+    let cancelled = false
+    const meshes: Mesh[] = []
+    root.traverse((o) => (o as Mesh).isMesh && meshes.push(o as Mesh))
+    const apply = (m: Mesh, g: BufferGeometry) => {
+      m.geometry = g
+      if (!g.boundsTree) idle(() => !cancelled && !g.boundsTree && g.computeBoundsTree())
+    }
+    for (const m of meshes) {
+      const geos = m.userData.geos as Record<string, BufferGeometry | Promise<BufferGeometry>>
+      const cached = geos[shade]
+      if (cached instanceof BufferGeometry) apply(m, cached)
+      else {
+        const job = (cached as Promise<BufferGeometry> | undefined) ?? reshade(geos.original as BufferGeometry, shade as 'smooth' | 'auto')
+        geos[shade] = job
+        job.then((g) => {
+          geos[shade] = g
+          if (!cancelled) {
+            apply(m, g)
+            invalidate()
+          }
+        })
+      }
+    }
+    invalidate()
+    return () => void (cancelled = true)
+  }, [root, shade])
+
+  // Store → Object3D. The gizmo writes the Object3D directly while dragging and commits on release.
+  const { position, rotation, scale } = obj.transform
+  useLayoutEffect(() => {
+    const g = group.current
+    if (!g) return
+    g.position.fromArray(position)
+    g.rotation.set(...rotation)
+    g.scale.fromArray(scale)
+    invalidate()
+  }, [position, rotation, scale])
 
   useLayoutEffect(() => {
     const g = group.current
@@ -97,16 +176,42 @@ export const Model = memo(function Model({ obj, selected, shading }: { obj: Scen
       <primitive object={helper} visible={selected} />
     </group>
   )
+}
+
+/** A broken GLB marks its own row in the outliner instead of taking down the viewport. */
+class ModelBoundary extends Component<{ id: string; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+  componentDidCatch(error: Error) {
+    console.warn('[model] load failed', error)
+    useWorkspace.getState().updateObject(this.props.id, { error: 'Not a valid .glb file' })
+  }
+  render() {
+    return this.state.failed ? null : this.props.children
+  }
+}
+
+/** Each model suspends on its own, so loading one never blanks the others. */
+export const Model = memo(function Model(props: Props) {
+  return (
+    <ModelBoundary id={props.obj.id}>
+      <Suspense fallback={null}>
+        <ModelInner {...props} />
+      </Suspense>
+    </ModelBoundary>
+  )
 })
 
-/** Restore original materials (for export) and return a function that undoes it. */
-export function withOriginalMaterials(target: Group | import('three').Object3D) {
+/** Put surface materials (generated or overridden) back for export; returns an undo function. */
+export function withOriginalMaterials(target: Object3D) {
   const swapped: [Mesh, Material | Material[]][] = []
   target.traverse((o) => {
     const m = o as Mesh
-    if (m.isMesh && m.userData.original) {
+    if (m.isMesh && m.userData.surface) {
       swapped.push([m, m.material])
-      m.material = m.userData.original
+      m.material = m.userData.surface
     }
   })
   return () => swapped.forEach(([m, mat]) => (m.material = mat))
