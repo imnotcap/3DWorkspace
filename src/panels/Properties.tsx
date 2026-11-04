@@ -6,6 +6,7 @@ import { SPACE_PRESETS, findPreset } from '@/generation/spaces'
 import type { ProviderId, Quality } from '@/generation/types'
 import { actions } from '@/lib/actions'
 import { scaleForSize, useActiveProject, useWorkspace, type PropertyTab, type RealSize, type SceneObject, type ShadeMode, type Vec3 } from '@/store/workspace'
+import { PRIMITIVES, SHAPE_FIELDS, restingHeight } from '@/lib/primitives'
 import { MaterialsSection } from './MaterialsSection'
 import { Button, Field, Select, Slider, Toggle, inputCls } from '@/ui/primitives'
 
@@ -242,6 +243,7 @@ function ObjectTab() {
           )}
         </div>
       </Field>
+      {obj.primitive && <ShapeSection obj={obj} />}
       <VecField label="Location" value={t.position} step={0.01} min={-1000} max={1000} onChange={(position) => set({ position })} onCommit={done} />
       <VecField
         label="Rotation"
@@ -278,6 +280,13 @@ function ObjectTab() {
       </Field>
       <MaterialsSection obj={obj} />
       {obj.spec != null && <RefineSection obj={obj} />}
+      {obj.spec != null && (
+        <Field label="Parts" hint="Turn every part into its own object you can move, resize and recolour.">
+          <Button className="h-6.5 px-2.5" onClick={actions.separateSelected}>
+            Separate into parts
+          </Button>
+        </Field>
+      )}
       <div className="h-px bg-line" />
       <Field label="Source">
         <span className="block truncate text-xs text-fg">{obj.source}</span>
@@ -443,6 +452,57 @@ function DimensionsField({ base, scale, realSize, onChange, onCommit, onApply }:
           </Button>
         )}
       </div>
+    </>
+  )
+}
+
+/** Objects you model yourself: shape parameters in cm, drag to scrub or click to type. */
+function ShapeSection({ obj }: { obj: SceneObject }) {
+  const p = obj.primitive!
+  const { updateObject, checkpoint } = useWorkspace.getState()
+  const editing = useRef(false)
+  const fields = SHAPE_FIELDS[p.shape]
+  const label = p.shape === 'cylinder' && p.dims[0] === 0 ? 'Cone' : (PRIMITIVES.find((x) => x.shape === p.shape)?.label ?? p.shape)
+  const set = (i: number, cm: number) => {
+    if (!editing.current) {
+      checkpoint('Shape')
+      editing.current = true
+    }
+    const dims = [...p.dims]
+    dims[i] = cm / 100
+    const next = { ...p, dims }
+    // An unrotated object resting on the floor stays on the floor as its height changes.
+    const t = obj.transform
+    const resting = Math.abs(t.position[1] - restingHeight(p) * t.scale[1]) < 1e-4 && t.rotation.every((r) => Math.abs(r) < 1e-6)
+    const transform = resting ? { ...t, position: [t.position[0], restingHeight(next) * t.scale[1], t.position[2]] as Vec3 } : t
+    updateObject(obj.id, { primitive: next, transform })
+  }
+  return (
+    <>
+      <Field label="Shape">
+        <span className="text-xs text-fg">{label}</span>
+      </Field>
+      {fields.map((f, i) => (
+        <Field key={f} label={f}>
+          <ScrubField
+            label="cm"
+            suffix=""
+            value={+(p.dims[i] * 100).toFixed(1)}
+            min={f.startsWith('Top') || f.startsWith('Corner') ? 0 : 0.1}
+            max={5000}
+            step={0.5}
+            size="sm"
+            showDelta={false}
+            rubberReach={0}
+            chipColor="#0d0d0d"
+            accent="#4c8dff"
+            className="!h-6.5 !w-full font-mono !text-2xs"
+            onChange={(v) => set(i, v)}
+            onCommit={() => (editing.current = false)}
+          />
+        </Field>
+      ))}
+      <div className="h-px bg-line" />
     </>
   )
 }

@@ -21,6 +21,7 @@ export function useHotkeys() {
       if (mod && key === 'e') return e.preventDefault(), void actions.exportSelected()
       if (mod) return
       if (e.shiftKey && key === 'n') return s.addProject()
+      if (e.shiftKey && key === 'd') return e.preventDefault(), actions.duplicateSelected()
 
       if (e.altKey && key === 'i') return e.preventDefault(), actions.deleteKey()
       if (e.shiftKey && key === 'arrowleft') return actions.jump('start')

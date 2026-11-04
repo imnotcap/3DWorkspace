@@ -32,6 +32,7 @@ export function TabBar() {
           { label: 'Render Image', shortcut: 'F12', onSelect: actions.renderImage },
           { label: 'Render Animation', shortcut: '⌃F12', onSelect: actions.renderAnimation },
           { label: 'Export Selected (.glb)', shortcut: '⌘E', onSelect: actions.exportSelected },
+          { label: 'Export Scene (.glb)', onSelect: actions.exportScene },
         ]}
       />
       <div className="flex h-7 items-center gap-1 rounded-md bg-panel-2 px-2 text-dim">

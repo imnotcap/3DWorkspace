@@ -1,5 +1,5 @@
 import type { ViewTag } from '@/generation/types'
-import { DEFAULT_ANIMATION, useWorkspace, type Animation, type CameraPose, type Interpolation, type ObjectKey, type RealSize, type MaterialOverride, type Project, type SceneObject, type ShadeMode, type Transform } from '@/store/workspace'
+import { DEFAULT_ANIMATION, useWorkspace, type Animation, type CameraPose, type Primitive, type Interpolation, type ObjectKey, type RealSize, type MaterialOverride, type Project, type SceneObject, type ShadeMode, type Transform } from '@/store/workspace'
 
 /**
  * Projects, meshes and input photos survive reloads via IndexedDB.
@@ -23,6 +23,7 @@ interface StoredObject {
   keys?: ObjectKey[]
   interpolation?: Interpolation
   surfaces?: Record<string, MaterialOverride>
+  primitive?: Primitive
   exact?: boolean
   spec?: unknown
 }
@@ -78,8 +79,8 @@ async function save() {
       autoAngles: p.autoAngles,
       animation: p.animation,
       objects: p.objects.map((o) => {
-        blobs.push([o.id, o.blob])
-        return { id: o.id, name: o.name, source: o.source, visible: o.visible, renderable: o.renderable, transform: o.transform, shade: o.shade, material: o.material, fitSize: o.fitSize ?? null, keys: o.keys, interpolation: o.interpolation, surfaces: o.surfaces, exact: o.exact, spec: o.spec }
+        if (o.blob) blobs.push([o.id, o.blob])
+        return { primitive: o.primitive, id: o.id, name: o.name, source: o.source, visible: o.visible, renderable: o.renderable, transform: o.transform, shade: o.shade, material: o.material, fitSize: o.fitSize ?? null, keys: o.keys, interpolation: o.interpolation, surfaces: o.surfaces, exact: o.exact, spec: o.spec }
       }),
       images: p.images.map((i) => {
         blobs.push([i.id, i.file])
@@ -112,6 +113,7 @@ async function load(): Promise<boolean> {
       const objects = (
         await Promise.all(
           p.objects.map(async (o): Promise<SceneObject | null> => {
+            if (o.primitive) return { ...o, shade: o.shade ?? 'original', material: o.material ?? null }
             const blob = await get(o.id)
             if (!blob) return null
             written.add(o.id)

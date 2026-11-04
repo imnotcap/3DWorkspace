@@ -1,6 +1,7 @@
 import { importModelFiles, startGeneration } from '@/generation/run'
 import { activeProject, useWorkspace, type ShadingMode, type Transform, type Vec3 } from '@/store/workspace'
 import { download, viewport } from '@/viewport/bridge'
+import { newPrimitive, restingHeight } from './primitives'
 
 let renderAbort: AbortController | null = null
 
@@ -169,6 +170,38 @@ export const actions = {
     if (!obj) return
     const blob = await viewport.exportGlb(obj.id)
     if (blob) download(blob, `${obj.name}.glb`)
+  },
+
+  /* ───── Modelling ───── */
+
+  /** Add → Box, Cylinder, … : a primitive at the origin, resting on the grid, selected. */
+  addPrimitive(label: string) {
+    const primitive = newPrimitive(label)
+    ws().addObject({
+      name: label,
+      primitive,
+      source: 'Modelled',
+      exact: true,
+      transform: { position: [0, restingHeight(primitive), 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    })
+  },
+
+  duplicateSelected() {
+    const s = ws()
+    if (s.selectedId) s.duplicateObject(s.selectedId)
+  },
+
+  /** Claude parts → separate primitive objects you can edit one by one. */
+  separateSelected() {
+    const s = ws()
+    if (!s.selectedId) return
+    const parts = viewport.separate(s.selectedId)
+    if (parts) s.replaceObject(s.selectedId, parts)
+  },
+
+  async exportScene() {
+    const blob = await viewport.exportScene()
+    if (blob) download(blob, `${fileBase()}.glb`)
   },
 
   /* ───── Files ───── */
