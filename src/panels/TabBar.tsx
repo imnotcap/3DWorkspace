@@ -1,6 +1,8 @@
 import { motion } from 'motion/react'
-import { Box, Menu as MenuIcon, PanelRightClose, PanelRightOpen, Plus, X } from 'lucide-react'
-import { useState } from 'react'
+import { Box, FileDown, LayoutTemplate, Menu as MenuIcon, PanelRightClose, PanelRightOpen, Plus, X } from 'lucide-react'
+import { lazy, Suspense, useState } from 'react'
+
+const TemplatesDialog = lazy(() => import('./TemplatesDialog').then((m) => ({ default: m.TemplatesDialog })))
 import { actions } from '@/lib/actions'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/store/workspace'
@@ -15,6 +17,7 @@ export function TabBar() {
   const redoLabel = useWorkspace((s) => s.future.at(-1)?.label)
   const [editing, setEditing] = useState<string | null>(null)
   const sidebar = useWorkspace((s) => s.settings.sidebar)
+  const [templates, setTemplates] = useState(false)
 
   return (
     <div className="flex h-9 shrink-0 items-center gap-1 px-1.5">
@@ -90,6 +93,17 @@ export function TabBar() {
           </span>
           {job.message}
         </div>
+      )}
+      <button type="button" onClick={() => setTemplates(true)} className="flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs text-dim transition-colors hover:bg-panel-2 hover:text-fg">
+        <LayoutTemplate className="size-3.5" /> Templates
+      </button>
+      <button type="button" onClick={actions.exportPdf} className="flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-fg px-2.5 text-xs font-medium text-app hover:bg-white">
+        <FileDown className="size-3.5" /> Export PDF
+      </button>
+      {templates && (
+        <Suspense fallback={null}>
+          <TemplatesDialog onClose={() => setTemplates(false)} />
+        </Suspense>
       )}
       <IconButton aria-label={sidebar ? 'Hide sidebar' : 'Show sidebar'} title={sidebar ? 'Hide sidebar' : 'Show sidebar'} onClick={() => useWorkspace.getState().updateSettings({ sidebar: !sidebar })} className="size-7">
         {sidebar ? <PanelRightClose className="size-3.5" /> : <PanelRightOpen className="size-3.5" />}
