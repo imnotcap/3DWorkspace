@@ -12,7 +12,8 @@ export function StatusBar() {
   const selectedId = useWorkspace((s) => s.selectedId)
   const project = useActiveProject()
   const selected = project.objects.find((o) => o.id === selectedId)
-  const backend = settings.providerId === 'hf-space' ? settings.spaceId || 'No Space set' : settings.workerUrl
+  const backend =
+    settings.providerId === 'hf-space' ? settings.spaceId || 'No Space set' : settings.providerId === 'photogrammetry' ? `Photogrammetry · ${settings.photogrammetryUrl}` : settings.workerUrl
 
   return (
     <div className="flex h-6 shrink-0 items-center gap-5 px-3 text-2xs text-faint">

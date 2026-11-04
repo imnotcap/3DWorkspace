@@ -1,5 +1,5 @@
 import { Client, handle_file, type Status } from '@gradio/client'
-import { QUALITY_PARAMS, findPreset } from '../spaces'
+import { QUALITY_PARAMS, findPreset, type SpacePreset } from '../spaces'
 import {
   GenerationError,
   type GenerateInput,
@@ -29,21 +29,31 @@ function assignViews(images: GenerateInput['images']): Views {
   return out
 }
 
-/** Map a parameter name to a value from our generic input. `undefined` = keep Space default. */
-function resolveParam(name: string, input: GenerateInput, views: Views, primary: Blob | string): unknown {
+type Primary = Blob | Record<string, unknown>
+
+/**
+ * Map a parameter name to a value. `undefined` = keep the Space's default.
+ * Presets with their own parameter table get only that table plus the core inputs;
+ * generic quality rules are for Spaces we have no table for.
+ */
+function resolveParam(name: string, input: GenerateInput, views: Views, primary: Primary, preset?: SpacePreset): unknown {
   const n = name.toLowerCase()
   const q = QUALITY_PARAMS[input.quality]
   const file = (b: Blob | undefined) => (b ? handle_file(b) : null)
+  const table = preset?.params?.[input.quality]
+  if (table && name in table) return table[name]
 
   if (/front/.test(n)) return file(views.front)
   if (/back/.test(n) && !/background/.test(n)) return file(views.back)
   if (/left/.test(n)) return file(views.left)
   if (/right/.test(n)) return file(views.right)
-  if (/^(image|input_image|img|input|processed_image)$/.test(n)) return typeof primary === 'string' ? primary : handle_file(primary)
+  // A Blob is a local photo to upload; an object is a file already on the Space (previous step's output).
+  if (/^(image|input_image|img|input|processed_image)$/.test(n)) return primary instanceof Blob ? handle_file(primary) : primary
   if (/caption|prompt|text/.test(n)) return null
   if (/rembg|remove_background|do_remove_background/.test(n)) return input.removeBackground
   if (/randomize/.test(n)) return input.seed === undefined
   if (n === 'seed') return input.seed ?? Math.floor(Math.random() * 2 ** 31)
+  if (table) return undefined
   if (/steps/.test(n)) return q.steps
   if (/octree/.test(n)) return q.octree
   if (/mc_resolution|resolution/.test(n)) return q.mc
@@ -54,7 +64,7 @@ function isImageParam(p: JsApiData) {
   return /image|img|front/i.test(p.parameter_name ?? p.label) || p.component === 'Image'
 }
 function returnsModel(ep: { returns: Params }) {
-  return ep.returns.some((r) => r.component === 'Model3D' || r.component === 'File')
+  return ep.returns.some((r) => /^(model3d|file|downloadbutton)$/i.test(r.component))
 }
 
 function pickEndpoint(api: ApiInfo, hint?: string): string {
@@ -64,15 +74,35 @@ function pickEndpoint(api: ApiInfo, hint?: string): string {
   return found[0]
 }
 
-function buildPayload(params: Params, input: GenerateInput, views: Views, primary: Blob | string) {
+function buildPayload(params: Params, input: GenerateInput, views: Views, primary: Primary, preset?: SpacePreset) {
   const payload: Record<string, unknown> = {}
   for (const p of params) {
+    // gr.State inputs are held per session on the server (TRELLIS keeps its latents there); never send them.
+    if (p.component?.toLowerCase() === 'state') continue
     const name = p.parameter_name ?? p.label
-    const v = resolveParam(name, input, views, primary)
+    if (!name) continue
+    const v = resolveParam(name, input, views, primary, preset)
     if (v !== undefined) payload[name] = v
     else if (p.parameter_has_default) payload[name] = p.parameter_default
   }
   return payload
+}
+
+/** First image-like file in a step's output, to feed the next step. */
+function findImage(data: unknown): Record<string, unknown> | undefined {
+  const list = Array.isArray(data) ? data : [data]
+  return list.find((v): v is Record<string, unknown> => {
+    if (!v || typeof v !== 'object') return false
+    const o = v as Record<string, unknown>
+    const url = String(o.url ?? o.path ?? '')
+    return !!url && !MODEL_EXT.test(url)
+  })
+}
+
+function stepLabel(endpoint: string) {
+  if (/pre/i.test(endpoint)) return 'Preparing image'
+  if (/extract|export|glb/i.test(endpoint)) return 'Baking textures and exporting'
+  return 'Generating 3D'
 }
 
 /** Collect every file-like output; prefer textured GLBs. */
@@ -144,20 +174,20 @@ export function createHfSpaceProvider(settings: HfSpaceSettings): Provider {
       try {
         const api = await client.view_api()
         const views = assignViews(input.images)
-        let primary: Blob | string = views.front!
+        let primary: Primary = views.front!
+        const steps = preset?.pipeline ?? [pickEndpoint(api)]
+        let data: unknown
 
-        if (preset?.preprocess && api.named_endpoints[preset.preprocess]) {
-          opts.onProgress({ stage: 'uploading', message: 'Preprocessing image' })
-          const pre = api.named_endpoints[preset.preprocess]
-          const out = await run(client, preset.preprocess, buildPayload(pre.parameters, input, views, primary), opts, 'Preprocessing')
-          const first = Array.isArray(out) ? out[0] : out
-          if (first && typeof first === 'object') primary = first as unknown as string
+        // All steps share one client session, so Spaces that keep results in gr.State (TRELLIS) work.
+        for (const [i, wanted] of steps.entries()) {
+          const name = api.named_endpoints[wanted] ? wanted : steps.length === 1 ? pickEndpoint(api) : null
+          if (!name)
+            throw new GenerationError(`${settings.spaceId} no longer has the ${wanted} step.`, 'The Space changed its API. Pick another model in Generate settings.')
+          const label = `${stepLabel(name)}${steps.length > 1 ? ` · ${i + 1}/${steps.length}` : ''}`
+          opts.onProgress({ stage: i === 0 ? 'uploading' : 'processing', message: label })
+          data = await run(client, name, buildPayload(api.named_endpoints[name].parameters, input, views, primary, preset), opts, label)
+          if (i < steps.length - 1) primary = findImage(data) ?? primary
         }
-
-        const endpoint = pickEndpoint(api, preset?.endpoint)
-        const ep = api.named_endpoints[endpoint]
-        opts.onProgress({ stage: 'uploading', message: 'Uploading images' })
-        const data = await run(client, endpoint, buildPayload(ep.parameters, input, views, primary), opts, 'Generating mesh')
 
         const url = findModelUrl(data)
         if (!url) throw new GenerationError('The Space finished but returned no .glb file.')

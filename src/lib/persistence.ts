@@ -1,5 +1,5 @@
 import type { ViewTag } from '@/generation/types'
-import { DEFAULT_ANIMATION, useWorkspace, type Animation, type CameraPose, type MaterialOverride, type Project, type SceneObject, type ShadeMode, type Transform } from '@/store/workspace'
+import { DEFAULT_ANIMATION, useWorkspace, type Animation, type CameraPose, type RealSize, type MaterialOverride, type Project, type SceneObject, type ShadeMode, type Transform } from '@/store/workspace'
 
 /**
  * Projects, meshes and input photos survive reloads via IndexedDB.
@@ -19,6 +19,7 @@ interface StoredObject {
   transform: Transform
   shade?: ShadeMode
   material?: MaterialOverride | null
+  fitSize?: RealSize | null
 }
 interface StoredImage {
   id: string
@@ -28,7 +29,7 @@ interface StoredImage {
 }
 interface StoredState {
   activeProjectId: string
-  projects: { id: string; name: string; objects: StoredObject[]; images: StoredImage[]; camera?: CameraPose | null; animation?: Animation }[]
+  projects: { id: string; name: string; objects: StoredObject[]; images: StoredImage[]; camera?: CameraPose | null; realSize?: RealSize | null; animation?: Animation }[]
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null
@@ -68,10 +69,11 @@ async function save() {
       id: p.id,
       name: p.name,
       camera: p.camera,
+      realSize: p.realSize,
       animation: p.animation,
       objects: p.objects.map((o) => {
         blobs.push([o.id, o.blob])
-        return { id: o.id, name: o.name, source: o.source, visible: o.visible, renderable: o.renderable, transform: o.transform, shade: o.shade, material: o.material }
+        return { id: o.id, name: o.name, source: o.source, visible: o.visible, renderable: o.renderable, transform: o.transform, shade: o.shade, material: o.material, fitSize: o.fitSize ?? null }
       }),
       images: p.images.map((i) => {
         blobs.push([i.id, i.file])
@@ -131,7 +133,7 @@ async function load(): Promise<boolean> {
           hasFront = true
           return { ...i, view }
         })
-      return { id: p.id, name: p.name, objects, images, camera: p.camera ?? null, animation: { ...DEFAULT_ANIMATION, ...p.animation } }
+      return { id: p.id, name: p.name, objects, images, camera: p.camera ?? null, realSize: p.realSize ?? null, animation: { ...DEFAULT_ANIMATION, ...p.animation } }
     }),
   )
 

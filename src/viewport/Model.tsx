@@ -3,7 +3,7 @@ import { invalidate, type ThreeEvent } from '@react-three/fiber'
 import { Component, memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
 import { Box3, Box3Helper, BufferGeometry, Color, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, Vector3, type Material, type Object3D } from 'three'
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh'
-import { useWorkspace, type SceneObject, type ShadingMode } from '@/store/workspace'
+import { scaleForSize, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
 import { disposeSurface, reshade, surfaceFor } from './shading'
 
@@ -93,8 +93,15 @@ function ModelInner({ obj, selected, shading }: Props) {
       vertices += pos.count
       triangles += (m.geometry.index ? m.geometry.index.count : pos.count) / 3
     })
-    useWorkspace.getState().updateObject(obj.id, { stats: { vertices, triangles: Math.round(triangles), meshes } })
-  }, [root, obj.id])
+    const size = box.getSize(new Vector3()).toArray() as Vec3
+    const st = useWorkspace.getState()
+    st.updateObject(obj.id, { stats: { vertices, triangles: Math.round(triangles), meshes, size } })
+    // Spec dimensions requested at generation time: apply once, now that the real bounds are known.
+    const current = st.projects.flatMap((p) => p.objects).find((o) => o.id === obj.id)
+    if (current?.fitSize) {
+      st.updateObject(obj.id, { fitSize: null, transform: { ...current.transform, scale: scaleForSize(size, current.fitSize, current.transform.scale) } })
+    }
+  }, [root, box, obj.id])
 
   // Surface = generated material, or the user's override. Viewport shading picks what's displayed.
   const override = obj.material

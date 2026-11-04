@@ -11,7 +11,12 @@ export interface MeshStats {
   vertices: number
   triangles: number
   meshes: number
+  /** Bounding-box size at scale 1, in metres (1 unit = 1 m). */
+  size: Vec3
 }
+
+/** Real-world size in metres; any axis may be left out. */
+export type RealSize = { x?: number; y?: number; z?: number }
 
 export interface Transform {
   position: Vec3
@@ -68,6 +73,8 @@ export interface SceneObject {
   shade: ShadeMode
   material: MaterialOverride | null
   stats?: MeshStats
+  /** Scale to this real size once the mesh has loaded (from the project's spec dimensions). */
+  fitSize?: RealSize | null
   error?: string
 }
 
@@ -85,6 +92,8 @@ export interface Project {
   images: InputImage[]
   /** null = automatic product framing */
   camera: CameraPose | null
+  /** Spec-sheet dimensions applied to every mesh generated in this project. */
+  realSize: RealSize | null
   animation: Animation
 }
 
@@ -101,6 +110,7 @@ export interface Settings {
   spaceId: string
   hfToken: string
   workerUrl: string
+  photogrammetryUrl: string
   quality: Quality
   removeBackground: boolean
   seed: number | null
@@ -145,7 +155,7 @@ interface WorkspaceState {
   renameProject: (id: string, name: string) => void
   replaceProjects: (projects: Project[], activeId: string) => void
   // objects
-  addObject: (obj: { name: string; blob: Blob; source: string }, projectId?: string) => string
+  addObject: (obj: { name: string; blob: Blob; source: string; fitSize?: RealSize | null }, projectId?: string) => string
   /** Silent update (stats, live scrubbing). Use `commit` for undoable edits. */
   updateObject: (id: string, patch: Partial<SceneObject>) => void
   /** Undoable update. */
@@ -168,6 +178,7 @@ interface WorkspaceState {
   updateSettings: (patch: Partial<Settings>) => void
   // camera + animation (active project)
   setCamera: (pose: CameraPose | null) => void
+  setRealSize: (size: RealSize | null) => void
   updateAnimation: (patch: Partial<Animation>) => void
   setKey: (frame: number, pose: CameraPose) => void
   removeKey: (frame: number) => void
@@ -182,7 +193,7 @@ const HISTORY_LIMIT = 64
 export const uid = () => Math.random().toString(36).slice(2, 10)
 export const IDENTITY: Transform = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }
 export const DEFAULT_ANIMATION: Animation = { fps: 30, start: 0, end: 120, interpolation: 'ease', keys: [] }
-const newProject = (name: string): Project => ({ id: uid(), name, objects: [], images: [], camera: null, animation: DEFAULT_ANIMATION })
+const newProject = (name: string): Project => ({ id: uid(), name, objects: [], images: [], camera: null, realSize: null, animation: DEFAULT_ANIMATION })
 
 /** Blender-style unique names: Mesh, Mesh.001, Mesh.002 … */
 function uniqueName(base: string, taken: string[]) {
@@ -218,9 +229,10 @@ export const useWorkspace = create<WorkspaceState>()(
       renderJob: null,
       settings: {
         providerId: 'hf-space',
-        spaceId: 'tencent/Hunyuan3D-2.1',
+        spaceId: 'microsoft/TRELLIS.2',
         hfToken: '',
         workerUrl: 'http://localhost:8000',
+        photogrammetryUrl: 'http://localhost:8001',
         quality: 'high',
         removeBackground: true,
         seed: null,
@@ -267,7 +279,7 @@ export const useWorkspace = create<WorkspaceState>()(
           return { past: [...s.past, { projectId: p.id, label, objects: p.objects }].slice(-HISTORY_LIMIT), future: [] }
         }),
 
-      addObject: ({ name, blob, source }, projectId) => {
+      addObject: ({ name, blob, source, fitSize }, projectId) => {
         const id = uid()
         const target = projectId ?? get().activeProjectId
         if (target === get().activeProjectId) get().checkpoint('Add')
@@ -287,6 +299,7 @@ export const useWorkspace = create<WorkspaceState>()(
                 transform: IDENTITY,
                 shade: 'auto',
                 material: null,
+                fitSize: fitSize ?? null,
               },
             ],
           })),
@@ -387,6 +400,7 @@ export const useWorkspace = create<WorkspaceState>()(
       updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
 
       setCamera: (camera) => set((s) => patchActive(s, (p) => ({ ...p, camera }))),
+      setRealSize: (realSize) => set((s) => patchActive(s, (p) => ({ ...p, realSize }))),
       updateAnimation: (patch) => set((s) => patchActive(s, (p) => ({ ...p, animation: { ...p.animation, ...patch } }))),
       setKey: (frame, pose) =>
         set((s) =>
@@ -403,14 +417,15 @@ export const useWorkspace = create<WorkspaceState>()(
     }),
     {
       name: 'workspace',
-      version: 2,
-      // v2: textured PBR model becomes the default (2mv is shape-only); new render settings.
+      version: 3,
+      // v2: textured model replaces shape-only 2mv as default. v3: TRELLIS.2 replaces Hunyuan3D-2.1 as default.
       migrate: (persisted, version) => {
         const p = persisted as { settings?: Partial<Settings>; shading?: ShadingMode }
         if (version < 2 && p.settings) {
           if (p.settings.spaceId === 'tencent/Hunyuan3D-2mv') p.settings.spaceId = 'tencent/Hunyuan3D-2.1'
           if (p.settings.quality === 'standard') p.settings.quality = 'high'
         }
+        if (version < 3 && p.settings?.spaceId === 'tencent/Hunyuan3D-2.1') p.settings.spaceId = 'microsoft/TRELLIS.2'
         return p as never
       },
       merge: (persisted, current) => {
@@ -427,3 +442,12 @@ export const activeProject = (s: Pick<WorkspaceState, 'projects' | 'activeProjec
   s.projects.find((p) => p.id === s.activeProjectId) ?? s.projects[0]
 
 export const useActiveProject = () => useWorkspace(activeProject)
+
+/** Scale that makes a box of `base` size match `target`. Missing axes follow the given ones proportionally. */
+export function scaleForSize(base: Vec3, target: RealSize, current: Vec3): Vec3 {
+  const axes = (['x', 'y', 'z'] as const).map((k, i) => (target[k] && base[i] > 0 ? target[k]! / base[i] : null))
+  const given = axes.filter((v): v is number => v !== null)
+  if (!given.length) return current
+  const mean = given.reduce((a, b) => a + b, 0) / given.length
+  return axes.map((v) => v ?? mean) as Vec3
+}

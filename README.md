@@ -10,8 +10,16 @@ Vite · React 19 · TypeScript · Tailwind v4 · Motion · React Three Fiber + d
 
 | Backend | Where it runs | Notes |
 | --- | --- | --- |
-| **Hugging Face Space** (default) | Public Gradio Spaces on HF GPUs | No key needed. An optional HF token raises your quota. Presets: **Hunyuan3D-2.1 (PBR textures, default)**, Hunyuan3D-2mv (multi-view, shape only), Hunyuan3D-2, TripoSR. Any Space id works. |
+| **Hugging Face Space** (default) | Public Gradio Spaces on HF GPUs | No key needed. An optional HF token raises your quota. Presets: **TRELLIS.2 (default, MIT, PBR, up to 1536³ / 4K textures)**, Hunyuan3D-2.1, Hunyuan3D-2mv (multi-view, shape only), Hunyuan3D-2, TripoSR. Any Space id works. |
+| **Photogrammetry** (exact) | `worker/photogrammetry/` on any computer (CPU) | Measures a real object from 30–80 photos with COLMAP + OpenMVS, then stands it upright and removes the floor. See [its README](worker/photogrammetry/README.md). |
 | **Local GPU worker** | `worker/` on your own NVIDIA GPU | Best quality: multi-view geometry, then a texture painted from the Front photo. No queue. See [worker/README.md](worker/README.md). |
+
+### Accuracy: which backend to use
+
+- **Exact model of something you own:** use Photogrammetry, plus one real measurement under *Real size*.
+- **Model from product photos only:** use TRELLIS.2, plus the full spec-sheet size (W × H × D) under *Real size*. Overall proportions come out exact; part details are the model's best guess.
+
+**Real size (cm)** in the Inputs panel scales every new mesh in the project to exactly that box. You can also edit any object later under **Size (cm)** in the Object panel (N), with proportions locked or free. The scene is metric: 1 unit = 1 m, the grid has 10 cm cells and 1 m sections.
 
 ### Input photos
 

@@ -42,7 +42,7 @@ export interface Provider {
   generate(input: GenerateInput, opts: GenerateOptions): Promise<GenerateResult>
 }
 
-export type ProviderId = 'hf-space' | 'local-worker'
+export type ProviderId = 'hf-space' | 'local-worker' | 'photogrammetry'
 
 export class GenerationError extends Error {
   constructor(

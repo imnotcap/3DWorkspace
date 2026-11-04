@@ -158,7 +158,7 @@ export function ViewportSideStrip() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 6, transition: { duration: 0.1 } }}
             transition={{ duration: 0.16, ease }}
-            className="absolute right-13 top-2 z-20 w-72 overflow-hidden rounded-xl border border-white/[0.06] bg-panel-2/92 shadow-2xl shadow-black/60 backdrop-blur-lg"
+            className="absolute right-13 top-2 z-20 max-h-[calc(100%-1rem)] w-80 overflow-y-auto rounded-xl border border-white/[0.06] bg-panel-2/92 shadow-2xl shadow-black/60 backdrop-blur-lg"
           >
             <div className="flex h-8 items-center justify-between border-b border-line pl-3 pr-1">
               <span className="text-xs font-medium text-fg">{TABS.find((t) => t.id === tab)?.label}</span>

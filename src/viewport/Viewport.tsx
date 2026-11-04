@@ -225,7 +225,7 @@ function SceneContent() {
             <Grid
               raycast={() => {}}
               infiniteGrid
-              cellSize={0.25}
+              cellSize={0.1}
               sectionSize={1}
               cellThickness={0.6}
               sectionThickness={1}

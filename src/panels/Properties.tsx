@@ -1,9 +1,10 @@
-import { useRef } from 'react'
+import { Lock, Unlock } from 'lucide-react'
+import { useRef, useState } from 'react'
 import ScrubField from '@/components/reactbits/ScrubField'
 import { SPACE_PRESETS, findPreset } from '@/generation/spaces'
 import type { ProviderId, Quality } from '@/generation/types'
 import { actions } from '@/lib/actions'
-import { useActiveProject, useWorkspace, type MaterialOverride, type PropertyTab, type SceneObject, type ShadeMode, type Vec3 } from '@/store/workspace'
+import { scaleForSize, useActiveProject, useWorkspace, type MaterialOverride, type PropertyTab, type RealSize, type SceneObject, type ShadeMode, type Vec3 } from '@/store/workspace'
 import { MATERIAL_PRESETS } from '@/viewport/materialPresets'
 import { Button, Field, Select, Slider, Toggle, inputCls } from '@/ui/primitives'
 
@@ -23,6 +24,7 @@ function GenerateTab() {
           options={[
             { value: 'hf-space', label: 'Hugging Face Space' },
             { value: 'local-worker', label: 'Local GPU worker' },
+            { value: 'photogrammetry', label: 'Photogrammetry · exact' },
           ]}
         />
       </Field>
@@ -45,6 +47,10 @@ function GenerateTab() {
             <input className={inputCls} type="password" placeholder="hf_…" value={s.hfToken} onChange={(e) => update({ hfToken: e.target.value })} autoComplete="off" />
           </Field>
         </>
+      ) : s.providerId === 'photogrammetry' ? (
+        <Field label="Worker URL" hint="Measures the real object from 30–80 photos taken all around it. Runs on any computer (CPU). Set Real size for exact scale.">
+          <input className={inputCls} value={s.photogrammetryUrl} onChange={(e) => update({ photogrammetryUrl: e.target.value })} />
+        </Field>
       ) : (
         <Field label="Worker URL" hint="Run worker/ with Docker on a machine with an NVIDIA GPU.">
           <input className={inputCls} value={s.workerUrl} onChange={(e) => update({ workerUrl: e.target.value })} />
@@ -168,6 +174,16 @@ function ObjectTab() {
         onCommit={done}
       />
       <VecField label="Scale" value={t.scale} step={0.01} min={0.01} max={100} onChange={(scale) => set({ scale })} onCommit={done} />
+      {obj.stats?.size && (
+        <DimensionsField
+          base={obj.stats.size}
+          scale={t.scale}
+          realSize={project.realSize}
+          onChange={(scale) => set({ scale })}
+          onCommit={done}
+          onApply={() => project.realSize && commit('Real size', obj.id, { transform: { ...t, scale: scaleForSize(obj.stats!.size, project.realSize, t.scale) } })}
+        />
+      )}
       <div className="h-px bg-line" />
       <Field label="Shading">
         <Segmented<ShadeMode>
@@ -299,6 +315,54 @@ function RenderTab() {
         <Button onClick={actions.renderAnimation}>Animation · ⌃F12</Button>
       </div>
     </div>
+  )
+}
+
+/** Blender's Dimensions: bounding-box size in cm. Locked = edit one axis, scale all proportionally. */
+function DimensionsField({ base, scale, realSize, onChange, onCommit, onApply }: {
+  base: Vec3
+  scale: Vec3
+  realSize: RealSize | null
+  onChange: (scale: Vec3) => void
+  onCommit: () => void
+  onApply: () => void
+}) {
+  const [locked, setLocked] = useState(true)
+  const cm = base.map((b, i) => +(b * scale[i] * 100).toFixed(1)) as Vec3
+  return (
+    <>
+      <VecField
+        label="Size (cm)"
+        value={cm}
+        step={1}
+        min={0.1}
+        max={100000}
+        suffix=""
+        onChange={(next) => {
+          const i = next.findIndex((v, k) => v !== cm[k])
+          if (i < 0 || base[i] <= 0) return
+          if (locked) {
+            const f = next[i] / cm[i]
+            onChange(scale.map((v) => v * f) as Vec3)
+          } else {
+            const s = [...scale] as Vec3
+            s[i] = next[i] / 100 / base[i]
+            onChange(s)
+          }
+        }}
+        onCommit={onCommit}
+      />
+      <div className="ml-[100px] flex items-center gap-2">
+        <button type="button" onClick={() => setLocked(!locked)} className="flex items-center gap-1 text-2xs text-dim hover:text-fg">
+          {locked ? <Lock className="size-3" /> : <Unlock className="size-3" />} {locked ? 'Proportional' : 'Free'}
+        </button>
+        {realSize && (
+          <Button variant="ghost" className="h-6 whitespace-nowrap px-2" onClick={onApply}>
+            Apply real size
+          </Button>
+        )}
+      </div>
+    </>
   )
 }
 

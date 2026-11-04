@@ -24,13 +24,15 @@ export function InputsPanel() {
   const [over, setOver] = useState(false)
   const running = job.status === 'running'
   const preset = settings.providerId === 'hf-space' ? findPreset(settings.spaceId) : undefined
+  const scan = settings.providerId === 'photogrammetry'
   const multiView = settings.providerId === 'local-worker' || !preset || preset.multiView
   const hasFront = project.images.some((i) => i.view === 'front')
   const hasDetail = project.images.some((i) => i.view === 'detail')
   const unusedSides = !multiView && project.images.some((i) => i.view !== 'front' && i.view !== 'detail')
 
   // Which images will actually be sent: Front always; sides only for multi-view models.
-  const used = (v: ViewTag) => v === 'front' || (multiView && v !== 'detail')
+  const used = (v: ViewTag) => scan || v === 'front' || (multiView && v !== 'detail')
+  const canGenerate = scan ? project.images.length >= 3 : hasFront
 
   return (
     <div
@@ -82,7 +84,8 @@ export function InputsPanel() {
                 >
                   <X className="size-3" />
                 </button>
-                <select
+                {!scan && (
+                  <select
                   value={img.view}
                   onChange={(e) => setImageView(img.id, e.target.value as ViewTag)}
                   aria-label="Image role"
@@ -96,7 +99,8 @@ export function InputsPanel() {
                       {v.label}
                     </option>
                   ))}
-                </select>
+                  </select>
+                )}
               </motion.div>
             ))}
           </AnimatePresence>
@@ -112,10 +116,20 @@ export function InputsPanel() {
           </button>
         </div>
 
+        <RealSizeRow />
+
         <div className="mt-2 space-y-1.5 text-2xs leading-snug text-faint">
-          {project.images.length > 0 && !hasFront && <p className="text-warn">Tag one image as Front: a full view of the whole object.</p>}
-          {hasDetail && <p>Detail shots stay as reference and aren't used for geometry. Tag an image Back/Left/Right only if it shows the whole object from that side.</p>}
-          {unusedSides && <p>{preset?.label} uses the Front image only. Choose Hunyuan3D-2mv to use side views too.</p>}
+          {scan ? (
+            <p className={project.images.length < 30 ? 'text-warn' : undefined}>
+              Photogrammetry uses every photo{project.images.length < 30 ? ` (${project.images.length} so far, 30–80 recommended)` : ''}. Walk all the way round, overlap each shot by about two thirds, add a higher ring, and keep the object filling most of the frame. Matte light, no motion blur.
+            </p>
+          ) : (
+            <>
+              {project.images.length > 0 && !hasFront && <p className="text-warn">Tag one image as Front: a full view of the whole object.</p>}
+              {hasDetail && <p>Detail shots stay as reference and aren't used for geometry. Tag an image Back/Left/Right only if it shows the whole object from that side.</p>}
+              {unusedSides && <p>{preset?.label} uses the Front image only. Choose Hunyuan3D-2mv to use side views too.</p>}
+            </>
+          )}
         </div>
       </div>
 
@@ -123,9 +137,45 @@ export function InputsPanel() {
         <Button variant="ghost" className="px-2" onClick={() => setPropertyTab('generate')}>
           Settings
         </Button>
-        <Button variant="primary" className="flex-1" disabled={running || !hasFront} onClick={actions.generate}>
-          {running ? 'Generating…' : 'Generate Mesh'}
+        <Button variant="primary" className="flex-1" disabled={running || !canGenerate} onClick={actions.generate}>
+          {running ? (scan ? 'Reconstructing…' : 'Generating…') : scan ? 'Reconstruct' : 'Generate Mesh'}
         </Button>
+      </div>
+    </div>
+  )
+}
+
+/** Spec-sheet dimensions (cm). Generated meshes are scaled to exactly this box. */
+function RealSizeRow() {
+  const project = useActiveProject()
+  const setRealSize = useWorkspace((s) => s.setRealSize)
+  const rs = project.realSize ?? {}
+  const field = (k: 'x' | 'y' | 'z', label: string) => (
+    <label className="flex h-6.5 min-w-0 items-center gap-1 rounded-md border border-line-strong bg-app/60 px-1.5 focus-within:border-accent">
+      <span className="text-2xs text-faint">{label}</span>
+      <input
+        inputMode="decimal"
+        placeholder="—"
+        value={rs[k] ? +(rs[k]! * 100).toFixed(1) : ''}
+        onChange={(e) => {
+          const cm = parseFloat(e.target.value.replace(',', '.'))
+          const next = { ...rs, [k]: Number.isFinite(cm) && cm > 0 ? cm / 100 : undefined }
+          setRealSize(next.x || next.y || next.z ? next : null)
+        }}
+        className="w-full min-w-0 bg-transparent text-right font-mono text-2xs text-fg outline-none placeholder:text-faint"
+      />
+    </label>
+  )
+  return (
+    <div className="mt-2.5">
+      <div className="mb-1 flex items-baseline justify-between">
+        <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Real size · cm</span>
+        <span className="text-2xs text-faint">from the spec sheet</span>
+      </div>
+      <div className="grid grid-cols-3 gap-1">
+        {field('x', 'W')}
+        {field('y', 'H')}
+        {field('z', 'D')}
       </div>
     </div>
   )
