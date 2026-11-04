@@ -1,11 +1,11 @@
 import { FlipHorizontal2, Trash2 } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
 import ScrubField from '@/components/reactbits/ScrubField'
 import { cn } from '@/lib/cn'
 import { actions } from '@/lib/actions'
 import { analyse, add, dist, mul, norm, pointInPolygon, sub, wallLength } from '@/plan/geometry'
 import { levelElevations, roomFor } from '@/plan/levels'
-import { DEFAULT_BEAMS, DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, DEFAULT_TRIM, DEFAULT_WALL_FINISH, OPENING_DEFAULTS, type CeilingBeams, type Finish, type OpeningKind, type PanelStyle, type RoomInfo, type RoomTrim, type SkirtStyle, type Vec2 } from '@/plan/types'
+import { DEFAULT_BEAMS, DEFAULT_CEILING_FINISH, flatRoof, DEFAULT_FLOOR_FINISH, DEFAULT_TRIM, DEFAULT_WALL_FINISH, OPENING_DEFAULTS, type CeilingBeams, type Finish, type RoomRoof, type OpeningKind, type PanelStyle, type RoomInfo, type RoomTrim, type SkirtStyle, type Vec2 } from '@/plan/types'
 import { uid, useActiveProject, useWorkspace, type PlanData } from '@/store/workspace'
 import { Button, Field, Select, Toggle, inputCls } from '@/ui/primitives'
 import { MATERIAL_LIBRARY, PAINT_COLORS, presetById } from '@/viewport/materialPresets'
@@ -262,9 +262,13 @@ function RoomInspector({ levelId, at }: { levelId: string; at: Vec2 }) {
       <Field label="Floor area">
         <span className="font-mono text-xs text-fg">{face.area.toFixed(2)} m²</span>
       </Field>
-      <Field label="Ceiling">
-        <span className="font-mono text-xs text-fg">{Math.round(level.height * 100)} cm</span>
-      </Field>
+      <Cm
+        label={info?.roof && info.roof.shape !== 'flat' ? 'Eaves height' : 'Ceiling height'}
+        value={info?.roof?.height ?? level.height}
+        min={1.8}
+        max={8}
+        onChange={(height, first) => update('Ceiling height', first, { roof: { ...(info?.roof ?? flatRoof(level.height)), height } })}
+      />
       <div className="space-y-1.5 border-t border-line pt-2">
         <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Floor</span>
         <FinishPicker value={info?.floor ?? DEFAULT_FLOOR_FINISH} materials={FLOORS} groups={FLOOR_GROUPS} onChange={(floor) => update('Floor', true, { floor })} />
@@ -278,8 +282,62 @@ function RoomInspector({ levelId, at }: { levelId: string; at: Vec2 }) {
       <div className="space-y-1.5 border-t border-line pt-2">
         <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Ceiling</span>
         <FinishPicker value={info?.ceiling ?? DEFAULT_CEILING_FINISH} materials={CEILINGS} onChange={(ceiling) => update('Ceiling', true, { ceiling })} />
+        <RoofSection roof={info?.roof ?? flatRoof(level.height)} level={level.height} onChange={(roof, first) => update('Ceiling shape', first, { roof })} />
         <BeamsSection beams={info?.beams} onChange={(beams, first) => update('Ceiling beams', first, { beams })} />
       </div>
+    </div>
+  )
+}
+
+/** The ceiling's shape: flat, sloping one way (lean-to) or pitched from a ridge. */
+function RoofSection({ roof, level, onChange }: { roof: RoomRoof; level: number; onChange: (r: RoomRoof, first: boolean) => void }) {
+  const set = (patch: Partial<RoomRoof>, first = true) => onChange({ ...roof, ...patch }, first)
+  const shapes: { id: RoomRoof['shape']; label: string; icon: ReactNode }[] = [
+    { id: 'flat', label: 'Flat', icon: <path d="M3 9h22M3 9v12M25 9v12" /> },
+    { id: 'shed', label: 'Sloped', icon: <path d="M3 13l22-8M3 13v8M25 5v16" /> },
+    { id: 'gable', label: 'Pitched', icon: <path d="M3 13l11-8 11 8M3 13v8M25 13v8" /> },
+  ]
+  return (
+    <div className="space-y-1.5 pt-1">
+      <div className="grid grid-cols-3 gap-1">
+        {shapes.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => set({ shape: s.id, ridge: s.id !== 'flat' && roof.ridge <= roof.height + 0.05 ? roof.height + 1.2 : roof.ridge })}
+            className={cn('flex flex-col items-center gap-0.5 rounded-lg border px-1 pb-1 pt-1.5 text-[10px] transition-colors', roof.shape === s.id ? 'border-accent bg-accent-soft text-fg' : 'border-line-strong bg-app/40 text-dim hover:text-fg')}
+          >
+            <svg viewBox="0 0 28 24" className="h-6 w-8" fill="none" stroke="currentColor" strokeWidth={1.4} strokeLinejoin="round">
+              {s.icon}
+            </svg>
+            {s.label}
+          </button>
+        ))}
+      </div>
+      {roof.shape !== 'flat' && (
+        <>
+          <Cm label={roof.shape === 'gable' ? 'Ridge height' : 'High side'} value={roof.ridge} min={roof.height + 0.1} max={12} onChange={(ridge, f) => set({ ridge }, f)} />
+          <Field label={roof.shape === 'gable' ? 'Ridge' : 'Slope'}>
+            <div className="grid grid-cols-2 gap-0.5 rounded-md border border-line-strong bg-app/60 p-0.5">
+              {[true, false].map((long) => (
+                <button key={String(long)} type="button" onClick={() => set({ ridgeLong: long })} className={cn('h-5.5 rounded text-2xs transition-colors', roof.ridgeLong === long ? 'bg-active text-fg' : 'text-dim hover:text-fg')}>
+                  {roof.shape === 'gable' ? (long ? 'Lengthwise' : 'Across') : long ? 'Across room' : 'Along room'}
+                </button>
+              ))}
+            </div>
+          </Field>
+          {roof.shape === 'shed' && (
+            <Field label="High side">
+              <Button className="h-6.5 w-full" onClick={() => set({ flip: !roof.flip })}>
+                Swap sides
+              </Button>
+            </Field>
+          )}
+          <p className="text-2xs leading-snug text-faint">
+            {roof.ridge > level + 0.01 ? `The walls go up to the ceiling (${Math.round((roof.ridge - level) * 100)} cm above the floor's ${Math.round(level * 100)} cm).` : 'Below the walls\' top: the walls stop at the ceiling.'}
+          </p>
+        </>
+      )}
     </div>
   )
 }

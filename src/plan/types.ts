@@ -95,6 +95,23 @@ export interface RoomInfo {
   trim?: RoomTrim
   /** Exposed ceiling beams (rafters) across the room. */
   beams?: CeilingBeams
+  /** The ceiling's height and shape (missing: flat at the floor's ceiling height). */
+  roof?: RoomRoof
+}
+
+export const flatRoof = (height: number): RoomRoof => ({ shape: 'flat', height, ridge: height + 1.2, ridgeLong: true })
+
+/** A room's ceiling: flat, sloping one way (lean-to), or pitched from a ridge (vaulted). */
+export interface RoomRoof {
+  shape: 'flat' | 'shed' | 'gable'
+  /** Flat: the ceiling height. Sloping: the height at the low side(s) (eaves), m above the floor. */
+  height: number
+  /** Sloping: the height at the ridge (pitched) or the high side (lean-to). */
+  ridge: number
+  /** The ridge (or the slope's level lines) runs along the room's long side. */
+  ridgeLong: boolean
+  /** Lean-to: high on the other side. */
+  flip?: boolean
 }
 
 export interface CeilingBeams {

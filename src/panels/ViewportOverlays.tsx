@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { Aperture, Grid3x3, Layers, SlidersHorizontal, Video, X } from 'lucide-react'
+import { Aperture, Grid3x3, House, Layers, SlidersHorizontal, Video, X } from 'lucide-react'
 import { PRIMITIVES } from '@/lib/primitives'
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { actions } from '@/lib/actions'
@@ -140,6 +140,7 @@ export function ViewportSideStrip() {
   const shading = useWorkspace((s) => s.shading)
   const tab = useWorkspace((s) => s.propertyTab)
   const showGrid = useWorkspace((s) => s.settings.showGrid)
+  const showCeilings = useWorkspace((s) => s.settings.showCeilings)
   const { setShading, setPropertyTab, updateSettings } = useWorkspace.getState()
 
   return (
@@ -164,6 +165,11 @@ export function ViewportSideStrip() {
         <Tooltip label="Grid" side="left">
           <IconButton aria-label="Toggle grid" active={showGrid} onClick={() => updateSettings({ showGrid: !showGrid })}>
             <Grid3x3 className="size-3.5" />
+          </IconButton>
+        </Tooltip>
+        <Tooltip label={showCeilings ? 'Ceilings shown (hide to look into the rooms)' : 'Show ceilings (sloping and pitched ones too)'} side="left">
+          <IconButton aria-label="Toggle ceilings" active={showCeilings} onClick={() => updateSettings({ showCeilings: !showCeilings })}>
+            <House className="size-3.5" />
           </IconButton>
         </Tooltip>
       </div>

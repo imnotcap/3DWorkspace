@@ -117,6 +117,32 @@ export function drawPlan(i: DrawInput): SvgNode[] {
       tag: 'polygon',
       attrs: { points: pts(f.inner.length >= 3 ? f.inner : f.polygon), fill: sel ? T.selected : floor.color, 'fill-opacity': sel ? 0.35 : T.floorAlpha, stroke: sel ? T.selected : T.roomStroke, 'stroke-width': px(2), ...(i.interactive ? { 'data-kind': 'room', 'data-x': f.center[0], 'data-y': f.center[1] } : {}) },
     })
+    // Sloping ceilings: the ridge (dashed) or an arrow up the slope.
+    const roof = info?.roof
+    if (roof && roof.shape !== 'flat') {
+      const xs = f.inner.map((p) => p[0])
+      const ys = f.inner.map((p) => p[1])
+      const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]
+      const alongX = x1 - x0 >= y1 - y0 === roof.ridgeLong
+      const P = (a: number, c: number) => (alongX ? [a, c] : [c, a])
+      const [a0, a1, c0, c1] = alongX ? [x0, x1, y0, y1] : [y0, y1, x0, x1]
+      const style = { stroke: T.dim, 'stroke-width': px(1.5), fill: 'none', 'pointer-events': 'none' }
+      if (roof.shape === 'gable') {
+        const [p, q] = [P(a0 + 0.1, (c0 + c1) / 2), P(a1 - 0.1, (c0 + c1) / 2)]
+        out.push({ tag: 'line', attrs: { x1: p[0], y1: p[1], x2: q[0], y2: q[1], 'stroke-dasharray': `${px(8)} ${px(5)}`, ...style } })
+      } else {
+        const am = (a0 + a1) / 2
+        const lo = roof.flip ? c1 - 0.35 : c0 + 0.35
+        const hi = roof.flip ? c0 + 0.35 : c1 - 0.35
+        const [p, q] = [P(am + (a1 - a0) * 0.3, lo), P(am + (a1 - a0) * 0.3, hi)]
+        const dx = q[0] - p[0]
+        const dy = q[1] - p[1]
+        const l = Math.hypot(dx, dy) || 1
+        const h = Math.min(0.25, l * 0.3)
+        const [ux, uy] = [dx / l, dy / l]
+        out.push({ tag: 'path', attrs: { d: `M ${p[0]} ${p[1]} L ${q[0]} ${q[1]} M ${q[0] - ux * h - uy * h * 0.6} ${q[1] - uy * h + ux * h * 0.6} L ${q[0]} ${q[1]} L ${q[0] - ux * h + uy * h * 0.6} ${q[1] - uy * h - ux * h * 0.6}`, ...style } })
+      }
+    }
     const fs = Math.max(px(12), 0.12)
     labels.push({ tag: 'text', attrs: { x: f.center[0], y: f.center[1] - fs * 0.15, 'font-size': fs, 'font-family': T.font, 'font-weight': 'bold', fill: T.text, 'text-anchor': 'middle', 'pointer-events': 'none' }, text: info?.name ?? 'Room' })
     labels.push({ tag: 'text', attrs: { x: f.center[0], y: f.center[1] + fs * 1.05, 'font-size': fs * 0.82, 'font-family': T.font, fill: T.subtext, 'text-anchor': 'middle', 'pointer-events': 'none' }, text: `${f.area.toFixed(1)} m²` })

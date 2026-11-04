@@ -3,7 +3,16 @@ import { createServer } from 'vite'
 import { createRequire } from 'node:module'
 const { chromium } = createRequire(import.meta.url)('playwright')
 const out = process.argv[2] ?? 'ceilings.png'
-const list = [
+const vault = [0.35, 1.3, 1.75, 5, 2.5, 1.75]
+const roofs = process.argv[3] === 'roofs'
+const list = roofs ? [
+  { label: 'Pitched, ridge lengthwise, wood wool + rafters', ceiling: { color: '#ebe9e4', preset: 'ceil-wood-wool' }, roof: { shape: 'gable', height: 2.5, ridge: 4.2, ridgeLong: true }, beams: { spacing: 1.2, width: 0.1, depth: 0.16, color: '#f4f3f0', across: true }, cam: vault },
+  { label: 'Pitched, perforated boards, no beams', ceiling: { color: '#f4f3f0', preset: 'ceil-perforated' }, roof: { shape: 'gable', height: 2.5, ridge: 3.8, ridgeLong: true }, cam: vault },
+  { label: 'Sloped (lean-to), slats, high at the back', ceiling: { color: '#c9a274', preset: 'ceil-slats' }, roof: { shape: 'shed', height: 2.4, ridge: 3.6, ridgeLong: true, flip: true }, cam: [2.5, 1.3, 3.25, 2.5, 2.6, 0.6] },
+  { label: 'Pitched across, plain + oak rafters', ceiling: { color: '#fbfaf8' }, roof: { shape: 'gable', height: 2.4, ridge: 3.9, ridgeLong: false }, beams: { spacing: 0.9, width: 0.12, depth: 0.2, color: '#c9a274', across: true }, cam: [2.5, 1.3, 3.25, 2.5, 2.6, 0.6] },
+  { label: 'Flat, lowered to 2.3 m, perforated tiles (whole tiles)', ceiling: { color: '#f6f6f4', preset: 'ceil-perforated-tiles' }, roof: { shape: 'flat', height: 2.3, ridge: 3.5, ridgeLong: true } },
+  { label: 'Flat 2.6 m, perforated boards fitted between beams', ceiling: { color: '#f4f3f0', preset: 'ceil-perforated' }, beams: { spacing: 1.2, width: 0.1, depth: 0.16, color: '#f4f3f0', across: true } },
+] : [
   { label: 'Perforated acoustic boards + white beams', ceiling: { color: '#f4f3f0', preset: 'ceil-perforated' }, beams: { spacing: 1.2, width: 0.1, depth: 0.16, color: '#f4f3f0', across: true } },
   { label: 'Perforated acoustic tiles', ceiling: { color: '#f6f6f4', preset: 'ceil-perforated-tiles' } },
   { label: 'Wood-wool panels, white', ceiling: { color: '#ebe9e4', preset: 'ceil-wood-wool' } },
