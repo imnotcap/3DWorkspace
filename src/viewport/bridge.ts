@@ -1,5 +1,5 @@
 import type { Object3D } from 'three'
-import type { CameraPose } from '@/store/workspace'
+import type { CameraPose, SceneObject } from '@/store/workspace'
 
 export interface VideoResult {
   blob: Blob
@@ -16,6 +16,9 @@ export const viewport = {
   frameAll: () => {},
   invalidate: () => {},
   exportGlb: async (_id: string): Promise<Blob | null> => null,
+  exportScene: async (): Promise<Blob | null> => null,
+  /** Claude parts object → editable primitive objects (positions in world space). */
+  separate: (_id: string): Omit<SceneObject, 'id'>[] | null => null,
   /** Pose of the current viewport view (what you see). */
   viewPose: (): CameraPose | null => null,
   /** Render camera pose at the current frame (keys → static camera → auto framing). */

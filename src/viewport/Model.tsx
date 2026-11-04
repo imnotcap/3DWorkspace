@@ -6,6 +6,7 @@ import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-
 import { objectTransformAt } from '@/lib/anim'
 import { scaleForSize, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
+import { primitiveGroup } from '@/generation/parts/build'
 import { reshade, surfaceFor } from './shading'
 
 // BVH-accelerated raycasting: picking a 1M-triangle mesh stays sub-millisecond.
@@ -32,27 +33,52 @@ interface Props {
   shading: ShadingMode
 }
 
-function ModelInner({ obj, selected, shading }: Props) {
-  const gltf = useGLTF(obj.url, true, true)
+/** Loaded/generated meshes: a GLB, fitted to FIT_SIZE unless built at real size, resting on the grid. */
+function GltfModel(props: Props) {
+  const gltf = useGLTF(props.obj.url!, true, true)
+  return <ObjectView {...props} source={gltf.scene} clone fit={!props.obj.exact} recenter />
+}
+
+/** Objects you model yourself: geometry straight from parameters, origin at the shape's centre. */
+function PrimitiveModel(props: Props) {
+  const p = props.obj.primitive!
+  const source = useMemo(() => primitiveGroup(p), [p])
+  useEffect(
+    () => () =>
+      source.traverse((o) => {
+        const m = o as Mesh
+        if (m.isMesh) {
+          m.geometry.dispose()
+          ;(m.userData.original as Material | undefined)?.dispose()
+        }
+      }),
+    [source],
+  )
+  return <ObjectView {...props} source={source} clone={false} fit={false} recenter={false} />
+}
+
+function ObjectView({ obj, selected, shading, source, clone, fit, recenter }: Props & { source: Object3D; clone: boolean; fit: boolean; recenter: boolean }) {
   const group = useRef<Group>(null)
 
   // Normalise once per load: fit into FIT_SIZE units, centre on XZ, rest on the grid.
-  // Exact models (built at real size) keep their metres; others are fitted to FIT_SIZE.
-  const exact = !!obj.exact
+  // Exact models and primitives keep their metres (metric UVs, real-size textures).
+  const exact = !!obj.exact || !!obj.primitive
   const { root, box } = useMemo(() => {
-    const root = gltf.scene.clone(true)
+    const root = clone ? source.clone(true) : source
     const v = new Vector3()
     const box = new Box3().setFromObject(root)
-    if (!exact) {
+    if (fit) {
       const max = Math.max(...box.getSize(v).toArray()) || 1
       root.scale.multiplyScalar(FIT_SIZE / max)
       root.updateMatrixWorld(true)
       box.setFromObject(root)
     }
-    const c = box.getCenter(v)
-    root.position.set(-c.x, -box.min.y, -c.z)
-    root.updateMatrixWorld(true)
-    box.setFromObject(root)
+    if (recenter) {
+      const c = box.getCenter(v)
+      root.position.set(-c.x, -box.min.y, -c.z)
+      root.updateMatrixWorld(true)
+      box.setFromObject(root)
+    }
     // Material slots: one per distinct generated material, named after it (Blender-style).
     const slotOf = new Map<string, string>()
     const used = new Set<string>()
@@ -75,7 +101,7 @@ function ModelInner({ obj, selected, shading }: Props) {
       m.castShadow = m.receiveShadow = true
     })
     return { root, box }
-  }, [gltf, exact])
+  }, [source, clone, fit, recenter])
 
   // Build BVHs when the main thread is idle, so loading never hitches.
   useEffect(() => {
@@ -236,9 +262,7 @@ class ModelBoundary extends Component<{ id: string; children: ReactNode }, { fai
 export const Model = memo(function Model(props: Props) {
   return (
     <ModelBoundary id={props.obj.id}>
-      <Suspense fallback={null}>
-        <ModelInner {...props} />
-      </Suspense>
+      <Suspense fallback={null}>{props.obj.primitive ? <PrimitiveModel {...props} /> : <GltfModel {...props} />}</Suspense>
     </ModelBoundary>
   )
 })

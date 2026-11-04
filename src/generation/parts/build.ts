@@ -32,7 +32,7 @@ import type { PartSpec, PartsSpec } from './spec'
 const ok = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n)
 const pos = (n: unknown) => ok(n) && n > 0
 
-function geometryFor(p: PartSpec): BufferGeometry | string {
+export function geometryFor(p: Pick<PartSpec, 'shape' | 'dims' | 'profile'>): BufferGeometry | string {
   const d = p.dims
   switch (p.shape) {
     case 'box':
@@ -71,7 +71,7 @@ function geometryFor(p: PartSpec): BufferGeometry | string {
  * axis. Textures then keep one real-world scale on every part (a 1 m wood tile is 1 m everywhere),
  * instead of stretching per face as primitive UVs do.
  */
-function metricUVs(g: BufferGeometry) {
+export function metricUVs(g: BufferGeometry) {
   if (!g.attributes.normal) g.computeVertexNormals()
   const p = g.attributes.position
   const n = g.attributes.normal
@@ -113,6 +113,7 @@ export function buildGroup(spec: PartsSpec): { group: Group; warnings: string[] 
     metricUVs(g)
     const mesh = new Mesh(g, materials.get(p.material) ?? fallback)
     mesh.name = p.name
+    mesh.userData.partIndex = spec.parts.indexOf(p)
     const [x = 0, y = 0, z = 0] = p.position
     const [rx = 0, ry = 0, rz = 0] = p.rotation_deg
     mesh.position.set(x, y, z)
@@ -161,4 +162,17 @@ export async function renderPreview(group: Group, spec: PartsSpec, width: number
     renderer.dispose()
     renderer.forceContextLoss()
   }
+}
+
+/** A user-made primitive object: one mesh, origin at the shape's centre (like Blender). */
+export function primitiveGroup(p: { shape: PartSpec['shape']; dims: number[]; profile: number[][]; material: { name: string; color: string; roughness: number; metalness: number } }): Group {
+  const g = geometryFor(p)
+  const geometry = typeof g === 'string' ? new BoxGeometry(0.1, 0.1, 0.1) : g
+  metricUVs(geometry)
+  const mat = new MeshStandardMaterial({ name: p.material.name, color: p.material.color, roughness: p.material.roughness, metalness: p.material.metalness })
+  const group = new Group()
+  const mesh = new Mesh(geometry, mat)
+  mesh.name = p.shape
+  group.add(mesh)
+  return group
 }

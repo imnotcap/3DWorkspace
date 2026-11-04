@@ -14,11 +14,15 @@ import {
   Vector3,
   type Object3D,
   type PerspectiveCamera,
+  Euler,
+  Quaternion,
+  type Mesh,
 } from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import { activeProject, useActiveProject, useWorkspace, type ShadingMode, type Vec3 } from '@/store/workspace'
+import type { PartsSpec } from '@/generation/parts/spec'
+import { activeProject, useActiveProject, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
 import { Model, withOriginalMaterials } from './Model'
 import { CameraView, RenderBridge } from './RenderSystem'
@@ -147,6 +151,66 @@ function Bridge() {
   const { gl, scene, camera, invalidate } = useThree()
   useEffect(() => {
     viewport.invalidate = invalidate
+
+    /** Claude parts → one editable primitive object per part, each exactly where it is now. */
+    viewport.separate = (id) => {
+      const obj = activeProject(useWorkspace.getState()).objects.find((o) => o.id === id)
+      const g = viewport.objects.get(id)
+      const spec = obj?.spec as PartsSpec | undefined
+      if (!obj || !g || !spec?.parts) return null
+      g.updateMatrixWorld(true)
+      const out: Omit<SceneObject, 'id'>[] = []
+      let ordinal = 0
+      g.traverse((o) => {
+        const m = o as Mesh
+        if (!m.isMesh || o.name === '__selection') return
+        const part = spec.parts[(m.userData.partIndex as number | undefined) ?? ordinal]
+        ordinal++
+        if (!part) return
+        const mat = spec.materials.find((x) => x.id === part.material)
+        const pos = new Vector3()
+        const q = new Quaternion()
+        const sc = new Vector3()
+        m.matrixWorld.decompose(pos, q, sc)
+        const e = new Euler().setFromQuaternion(q, 'XYZ')
+        out.push({
+          name: part.name,
+          source: 'Modelled',
+          primitive: {
+            shape: part.shape,
+            dims: part.dims,
+            profile: part.profile,
+            material: { name: mat?.name ?? 'Material', color: mat?.color ?? '#bcbcbc', roughness: mat?.roughness ?? 0.5, metalness: mat?.metalness ?? 0 },
+          },
+          visible: obj.visible,
+          renderable: obj.renderable,
+          transform: { position: pos.toArray() as Vec3, rotation: [e.x, e.y, e.z], scale: sc.toArray() as Vec3 },
+          shade: 'original',
+          // Keep whatever material the user had chosen for that surface.
+          material: obj.surfaces?.[m.userData.slot as string] ?? obj.material ?? null,
+          exact: true,
+        })
+      })
+      return out.length ? out : null
+    }
+
+    /** Every visible object in one GLB, with the materials you assigned. */
+    viewport.exportScene = async () => {
+      const objs = [...viewport.objects.values()].filter((o) => o.visible)
+      if (!objs.length) return null
+      const restores = objs.map(withOriginalMaterials)
+      const helpers: Object3D[] = []
+      objs.forEach((t) => t.traverse((o) => o.name === '__selection' && o.visible && (helpers.push(o), (o.visible = false))))
+      try {
+        const out = await new GLTFExporter().parseAsync(objs, { binary: true, onlyVisible: true })
+        return new Blob([out as ArrayBuffer], { type: 'model/gltf-binary' })
+      } finally {
+        restores.forEach((r) => r())
+        helpers.forEach((o) => (o.visible = true))
+        invalidate()
+      }
+    }
+
     viewport.exportGlb = async (id) => {
       const target = viewport.objects.get(id)
       if (!target) return null

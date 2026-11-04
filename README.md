@@ -10,7 +10,7 @@ Vite · React 19 · TypeScript · Tailwind v4 · Motion · React Three Fiber + d
 
 | Backend | Where it runs | Notes |
 | --- | --- | --- |
-| **Hugging Face Space** (default) | Public Gradio Spaces on HF GPUs | No key needed. An optional HF token raises your quota. Presets: **TRELLIS.2 (default, MIT, PBR, up to 1536³ / 4K textures)**, Hunyuan3D-2.1, Hunyuan3D-2mv (multi-view, shape only), Hunyuan3D-2, TripoSR. Any Space id works. |
+| **Hugging Face Space** (default) | Public Gradio Spaces on HF GPUs | Free, but with a small **daily GPU allowance** per visitor that resets each day. A free Hugging Face account token raises it. Presets: **TRELLIS.2 (default, MIT, PBR, up to 1536³ / 4K textures)**, Hunyuan3D-2.1, Hunyuan3D-2mv (multi-view, shape only), Hunyuan3D-2, TripoSR. Any Space id works. |
 | **Parts · Claude** (exact) | Anthropic API, your own key | Claude reads every photo (detail shots too) and writes the product as exact primitive parts at real size with materials. A self-check renders the result from the photo's angle and has Claude correct it. Refine later in plain words ("legs are square 6 × 6 cm"). Best for hard-surface products. Roughly $0.20–0.80 per model on Opus 5.5. |
 | **Photogrammetry** (exact) | `worker/photogrammetry/` on any computer (CPU) | Measures a real object from 30–80 photos with COLMAP + OpenMVS, then stands it upright and removes the floor. See [its README](worker/photogrammetry/README.md). |
 | **Local GPU worker** | `worker/` on your own NVIDIA GPU | Best quality: multi-view geometry, then a texture painted from the Front photo. No queue. See [worker/README.md](worker/README.md). |
@@ -59,6 +59,7 @@ Push to `main`. `.github/workflows/deploy.yml` builds and publishes to Pages. En
 | X / Delete | Delete |
 | F12 | Render PNG (2×, no helpers) |
 | ⌘/Ctrl + I, ⌘/Ctrl + E | Import GLB, export selected GLB |
+| Shift + D | Duplicate selected object |
 | ⌘/Ctrl + Z, ⇧⌘/Ctrl + Z | Undo, redo (add, delete, transforms, shading, materials) |
 | 0 / Ctrl + Alt + 0 | Camera view / align camera to view |
 | Space, ← →, Shift + ← → | Play/pause, step frame, jump to start/end |
@@ -76,6 +77,18 @@ Transform fields in the Object panel (N) are drag-to-scrub: drag to change, Shif
 - The gizmo moves the three.js object directly. The store is only updated on release (one undo step).
 - Raycasting uses `three-mesh-bvh`, built in idle time: picking a 1M-triangle mesh takes about 0.1 ms.
 - Each model suspends and fails on its own. A broken file is flagged in the outliner without affecting the viewport.
+
+## Modelling it yourself
+
+No generator or quota needed:
+
+- **Add → Box, Rounded box, Cylinder, Cone, Sphere, Capsule, Torus:** each is added at the origin, resting on the grid.
+- **Shape (Object panel, N):** every parameter in cm (width, height, depth, radius, corner radius…). Drag to scrub, or click to type. Objects resting on the floor stay on it as they change height.
+- **Transform:** G/R/S or the gizmo, or type Location, Rotation and Size. **Shift+D** duplicates.
+- **Separate into Parts:** turns a Claude-parts model into one editable primitive per part, each kept exactly in place, so you can fix any piece by hand.
+- **Export Scene (.glb):** every visible object, with its materials, in one file.
+
+Primitives get the same materials, keyframes, renders and undo as everything else.
 
 ## Materials
 

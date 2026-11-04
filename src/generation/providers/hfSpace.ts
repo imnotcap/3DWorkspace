@@ -123,7 +123,8 @@ function findModelUrl(data: unknown): string | undefined {
   return urls.find((u) => /textured|texture/i.test(u)) ?? urls[0]
 }
 
-const QUOTA_HINT = 'Free GPU quota reached. Add a free Hugging Face token in Generate settings, lower Quality, or try again later.'
+const QUOTA_HINT =
+  "Hugging Face's free daily GPU allowance is used up (it resets daily). Add a free Hugging Face token for a bigger allowance, or switch Backend to Parts · Claude, Photogrammetry or a local worker, or model it yourself with Add → Box, Cylinder…"
 
 async function run(client: Client, endpoint: string, payload: Record<string, unknown>, opts: GenerateOptions, label: string) {
   const job = client.submit(endpoint, payload)

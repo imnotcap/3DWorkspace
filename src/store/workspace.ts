@@ -72,13 +72,26 @@ export interface Animation {
   keys: CameraKey[]
 }
 
+export type PrimitiveShape = 'box' | 'rounded_box' | 'cylinder' | 'sphere' | 'capsule' | 'torus' | 'extrude' | 'lathe'
+
+/** A shape you model yourself: built from parameters, no file. Units are metres. */
+export interface Primitive {
+  shape: PrimitiveShape
+  /** Same meaning as a Claude part's dims (e.g. box: [w, h, d]). */
+  dims: number[]
+  profile: number[][]
+  material: { name: string; color: string; roughness: number; metalness: number }
+}
+
 export interface SceneObject {
   id: string
   name: string
-  /** GLB bytes; persisted to IndexedDB */
-  blob: Blob
+  /** GLB bytes; persisted to IndexedDB. Absent for primitives. */
+  blob?: Blob
   /** blob: URL for the loader, derived from `blob` */
-  url: string
+  url?: string
+  /** Set for objects you model yourself; replaces the GLB. */
+  primitive?: Primitive
   visible: boolean
   renderable: boolean
   source: string
@@ -186,7 +199,10 @@ interface WorkspaceState {
   renameProject: (id: string, name: string) => void
   replaceProjects: (projects: Project[], activeId: string) => void
   // objects
-  addObject: (obj: { name: string; blob: Blob; source: string; fitSize?: RealSize | null; exact?: boolean; spec?: unknown }, projectId?: string) => string
+  addObject: (obj: { name: string; blob?: Blob; primitive?: Primitive; source: string; fitSize?: RealSize | null; exact?: boolean; spec?: unknown; transform?: Transform; material?: MaterialOverride | null }, projectId?: string) => string
+  /** One undo step: remove `id` and add `objects` in its place (Separate into parts). */
+  replaceObject: (id: string, objects: Omit<SceneObject, 'id'>[]) => void
+  duplicateObject: (id: string) => string | null
   setAutoAngles: (angles: { azimuth: number; polar: number } | null, projectId?: string) => void
   /** Silent update (stats, live scrubbing). Use `commit` for undoable edits. */
   updateObject: (id: string, patch: Partial<SceneObject>) => void
@@ -295,7 +311,7 @@ export const useWorkspace = create<WorkspaceState>()(
       closeProject: (id) =>
         set((s) => {
           const closing = s.projects.find((p) => p.id === id)
-          closing?.objects.forEach((o) => URL.revokeObjectURL(o.url))
+          closing?.objects.forEach((o) => o.url && URL.revokeObjectURL(o.url))
           closing?.images.forEach((i) => URL.revokeObjectURL(i.url))
           let projects = s.projects.filter((p) => p.id !== id)
           if (!projects.length) projects = [newProject('Untitled')]
@@ -320,7 +336,45 @@ export const useWorkspace = create<WorkspaceState>()(
         }),
 
       setAutoAngles: (autoAngles, projectId) => set((s) => patchProject(s, projectId ?? s.activeProjectId, (p) => ({ ...p, autoAngles }))),
-      addObject: ({ name, blob, source, fitSize, exact, spec }, projectId) => {
+      replaceObject: (id, objects) => {
+        get().checkpoint('Separate')
+        const ids = objects.map(() => uid())
+        set((s) =>
+          ({
+            ...patchActive(s, (p) => {
+              const taken = p.objects.filter((o) => o.id !== id).map((o) => o.name)
+              const added = objects.map((o, i) => {
+                const name = uniqueName(o.name, taken)
+                taken.push(name)
+                return { ...o, id: ids[i], name }
+              })
+              return { ...p, objects: [...p.objects.filter((o) => o.id !== id), ...added] }
+            }),
+            selectedId: ids[0] ?? null,
+          }),
+        )
+      },
+      duplicateObject: (id) => {
+        const src = activeProject(get()).objects.find((o) => o.id === id)
+        if (!src) return null
+        get().checkpoint('Duplicate')
+        const nid = uid()
+        // Offset by the object's width so the copy is visible next to the original (Blender would start a grab).
+        const w = (src.stats?.size[0] ?? 0.5) * src.transform.scale[0]
+        const transform = { ...src.transform, position: [src.transform.position[0] + w * 1.1, src.transform.position[1], src.transform.position[2]] as Vec3 }
+        set((s) => ({
+          ...patchActive(s, (p) => ({
+            ...p,
+            objects: [
+              ...p.objects,
+              { ...src, id: nid, name: uniqueName(src.name, p.objects.map((o) => o.name)), url: src.blob ? URL.createObjectURL(src.blob) : undefined, transform, keys: undefined, stats: undefined },
+            ],
+          })),
+          selectedId: nid,
+        }))
+        return nid
+      },
+      addObject: ({ name, blob, primitive, source, fitSize, exact, spec, transform, material }, projectId) => {
         const id = uid()
         const target = projectId ?? get().activeProjectId
         if (target === get().activeProjectId) get().checkpoint('Add')
@@ -333,13 +387,15 @@ export const useWorkspace = create<WorkspaceState>()(
                 id,
                 name: uniqueName(name, p.objects.map((o) => o.name)),
                 blob,
-                url: URL.createObjectURL(blob),
+                url: blob ? URL.createObjectURL(blob) : undefined,
+                primitive,
                 source,
                 visible: true,
                 renderable: true,
-                transform: IDENTITY,
-                shade: 'auto',
-                material: null,
+                transform: transform ?? IDENTITY,
+                // Primitives already have correct normals; Auto Smooth is for generated meshes.
+                shade: primitive ? 'original' : 'auto',
+                material: material ?? null,
                 fitSize: fitSize ?? null,
                 exact,
                 spec,

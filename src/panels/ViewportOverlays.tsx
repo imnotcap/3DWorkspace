@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { Aperture, Grid3x3, Hash, Layers, SlidersHorizontal, X } from 'lucide-react'
+import { PRIMITIVES } from '@/lib/primitives'
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { cancelGeneration } from '@/generation/run'
 import { actions } from '@/lib/actions'
@@ -22,6 +23,7 @@ export function ViewportHeader() {
   const showTimeline = useWorkspace((s) => s.settings.showTimeline)
   const cameraView = useWorkspace((s) => s.cameraView)
   const project = useActiveProject()
+  const selected = project.objects.find((o) => o.id === selectedId)
   const { updateSettings, select, setPropertyTab } = useWorkspace.getState()
 
   return (
@@ -60,6 +62,8 @@ export function ViewportHeader() {
       <Menu
         trigger="Add"
         items={[
+          ...PRIMITIVES.map((p) => ({ label: p.label, onSelect: () => (actions.addPrimitive(p.label), setPropertyTab('object')) })),
+          { separator: true, label: '' },
           { label: 'Mesh from Images…', onSelect: () => (setPropertyTab('generate'), actions.addImages()) },
           { label: 'Import GLB…', onSelect: actions.importGlb },
         ]}
@@ -68,7 +72,11 @@ export function ViewportHeader() {
         trigger="Object"
         items={[
           { label: 'Properties', shortcut: 'N', onSelect: () => setPropertyTab('object'), disabled: !selectedId },
-          { label: 'Export GLB', shortcut: '⌘E', onSelect: actions.exportSelected, disabled: !selectedId },
+          { label: 'Duplicate', shortcut: '⇧D', onSelect: actions.duplicateSelected, disabled: !selectedId },
+          { label: 'Separate into Parts', onSelect: actions.separateSelected, disabled: !selected?.spec },
+          { separator: true, label: '' },
+          { label: 'Export Selected (.glb)', shortcut: '⌘E', onSelect: actions.exportSelected, disabled: !selectedId },
+          { label: 'Export Scene (.glb)', onSelect: actions.exportScene, disabled: !project.objects.length },
           { separator: true, label: '' },
           { label: 'Delete', shortcut: 'X', onSelect: actions.deleteSelected, disabled: !selectedId },
         ]}
@@ -301,7 +309,7 @@ export function EmptyState({ dragging }: { dragging: boolean }) {
             )}
           >
             <span className="text-sm text-fg">{dragging ? 'Release to add' : 'Drop reference images'}</span>
-            <span className="text-2xs text-dim">Photos go to Inputs · .glb files import directly</span>
+            <span className="text-2xs text-dim">Photos go to Inputs · .glb files import directly · or model it yourself with Add → Box</span>
           </div>
         </motion.div>
       )}
