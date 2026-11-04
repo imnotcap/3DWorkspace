@@ -8,12 +8,13 @@ import { Sidebar } from '@/panels/Sidebar'
 import { StatusBar } from '@/panels/StatusBar'
 import { TabBar } from '@/panels/TabBar'
 import { ToolStrip } from '@/panels/ToolStrip'
-import { Timeline } from '@/panels/Timeline'
-import { CameraFrame, JobCard, RenderProgress, StatsOverlay, ViewportHeader, ViewportSideStrip } from '@/panels/ViewportOverlays'
+import { TourBar } from '@/panels/TourBar'
+import { CameraFrame, JobCard, RenderProgress, StatsOverlay, TraceStatus, ViewportHeader, ViewportSideStrip } from '@/panels/ViewportOverlays'
 import { PlanEditor } from '@/plan/PlanEditor'
 import { tourFrames } from '@/plan/tour'
 import { activeProject, useWorkspace } from '@/store/workspace'
 import { useHotkeys } from './useHotkeys'
+import { Home } from './Home'
 
 // three.js is the heaviest chunk; split it so the shell paints first.
 const Viewport = lazy(() => import('@/viewport/Viewport').then((m) => ({ default: m.Viewport })))
@@ -32,7 +33,7 @@ function useTourLength() {
         const p = activeProject(s)
         const q = activeProject(prev)
         if (p.tour === q.tour && p.levels === q.levels && p.useTour === q.useTour && p.animation.fps === q.animation.fps) return
-        if (!p.useTour || p.tour.points.length < 2) return
+        if (p.tour.points.length < 2) return
         const end = tourFrames(p, p.animation.fps) - 1
         if (p.animation.start !== 0 || p.animation.end !== end) s.updateAnimation({ start: 0, end })
       }),
@@ -46,6 +47,8 @@ export function App() {
   const [dragging, setDragging] = useState(false)
   const showTimeline = useWorkspace((s) => s.settings.showTimeline)
   const view = useWorkspace((s) => s.view)
+  const screen = useWorkspace((s) => s.screen)
+  if (screen === 'home') return <Home />
 
   return (
     <div className="flex h-full flex-col bg-app">
@@ -80,6 +83,7 @@ export function App() {
                       <ViewportHeader />
                       <ViewportSideStrip />
                       <StatsOverlay />
+                      <TraceStatus />
                       <CameraFrame />
                       {dragging && <div className="pointer-events-none absolute inset-2 rounded-lg border-2 border-dashed border-accent/70" />}
                     </div>
@@ -91,8 +95,8 @@ export function App() {
               {showTimeline && (
                 <>
                   <Handle vertical />
-                  <Panel defaultSize="150px" minSize="96px" maxSize="45" className="rounded-lg bg-panel">
-                    <Timeline />
+                  <Panel defaultSize="44px" minSize="40px" maxSize="64px" className="rounded-lg bg-panel">
+                    <TourBar />
                   </Panel>
                 </>
               )}

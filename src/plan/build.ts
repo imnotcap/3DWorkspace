@@ -54,7 +54,8 @@ export function finishMaterial(f: Finish, kind: 'wall' | 'floor' | 'ceiling' | '
   return m
 }
 
-const GLASS = new MeshPhysicalMaterial({ name: 'glass', color: '#dfeaf0', roughness: 0.02, metalness: 0, transparent: true, opacity: 0.18, depthWrite: false, side: DoubleSide, envMapIntensity: 1.2 })
+// Real glass: thin, clear, refractive (transmission), so daylight comes through in the path tracer.
+const GLASS = new MeshPhysicalMaterial({ name: 'glass', color: '#f4f8fa', roughness: 0.01, metalness: 0, transmission: 1, thickness: 0, ior: 1.5, side: DoubleSide, envMapIntensity: 1.2 })
 const STEEL = new MeshStandardMaterial({ name: 'handle', color: '#c9cbcd', roughness: 0.28, metalness: 1 })
 const ALU = new MeshStandardMaterial({ name: 'aluminium', color: '#3a3d40', roughness: 0.4, metalness: 0.6 })
 

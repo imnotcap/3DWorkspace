@@ -1,8 +1,7 @@
-import type { ViewTag } from '@/generation/types'
-import { DEFAULT_ANIMATION, DEFAULT_PROMPT, DEFAULT_TOUR, modelUrl, newLevel, useWorkspace, type FurnitureSpec, type PlanData, type Animation, type CameraPose, type Primitive, type Interpolation, type ObjectKey, type PartPrompt, type RealSize, type MaterialOverride, type Project, type SceneObject, type Segmentation, type ShadeMode, type Transform } from '@/store/workspace'
+import { DEFAULT_ANIMATION, DEFAULT_TOUR, modelUrl, newLevel, useWorkspace, type FurnitureSpec, type PlanData, type Animation, type CameraPose, type LightSettings, type Primitive, type Interpolation, type ObjectKey, type MaterialOverride, type Project, type SceneObject, type ShadeMode, type Transform } from '@/store/workspace'
 
 /**
- * Projects, meshes and input photos survive reloads via IndexedDB.
+ * Projects and meshes survive reloads via IndexedDB.
  * Layout: `blobs` store (id → Blob) + one `state` record with the project tree.
  * Blobs are written once when they first appear; the tree is rewritten (debounced) on change.
  */
@@ -26,7 +25,7 @@ interface StoredObject {
   transform: Transform
   shade?: ShadeMode
   material?: MaterialOverride | null
-  fitSize?: RealSize | null
+  light?: LightSettings
   keys?: ObjectKey[]
   interpolation?: Interpolation
   surfaces?: Record<string, MaterialOverride>
@@ -34,27 +33,14 @@ interface StoredObject {
   exact?: boolean
   spec?: unknown
 }
-interface StoredImage {
-  id: string
-  name: string
-  type: string
-  view: ViewTag
-}
-/** Segment masks are stored as blobs under the segment's id. */
-type StoredSegmentation = Omit<Segmentation, 'segments'> & { segments: Omit<Segmentation['segments'][number], 'mask'>[] }
 interface StoredState {
   activeProjectId: string
   projects: {
     id: string
     name: string
     objects: StoredObject[]
-    images: StoredImage[]
     camera?: CameraPose | null
-    realSize?: RealSize | null
-    autoAngles?: { azimuth: number; polar: number } | null
     animation?: Animation
-    prompt?: PartPrompt
-    segmentation?: StoredSegmentation | null
     plan?: PlanData
     activeLevelId?: string
     useTour?: boolean
@@ -98,20 +84,10 @@ async function save() {
       id: p.id,
       name: p.name,
       camera: p.camera,
-      realSize: p.realSize,
-      autoAngles: p.autoAngles,
       animation: p.animation,
-      prompt: p.prompt,
       plan: { levels: p.levels, walls: p.walls, openings: p.openings, rooms: p.rooms, tour: p.tour },
       activeLevelId: p.activeLevelId,
       useTour: p.useTour,
-      segmentation: p.segmentation && {
-        ...p.segmentation,
-        segments: p.segmentation.segments.map(({ mask, ...g }) => {
-          blobs.push([g.id, mask])
-          return g
-        }),
-      },
       objects: p.objects.map((o) => {
         if (o.blob) blobs.push([o.id, o.blob])
         return {
@@ -132,17 +108,13 @@ async function save() {
           transform: o.transform,
           shade: o.shade,
           material: o.material,
-          fitSize: o.fitSize ?? null,
+          light: o.light,
           keys: o.keys,
           interpolation: o.interpolation,
           surfaces: o.surfaces,
           exact: o.exact,
           spec: o.spec,
         }
-      }),
-      images: p.images.map((i) => {
-        blobs.push([i.id, i.file])
-        return { id: i.id, name: i.file.name, type: i.file.type, view: i.view }
       }),
     })),
   }
@@ -184,44 +156,6 @@ async function load(): Promise<boolean> {
       // A part whose model is gone (a missing blob) moves to the top level instead of vanishing.
       const present = new Set(objects.map((o) => o.id))
       for (const o of objects) if (o.parentId && !present.has(o.parentId)) o.parentId = null
-      // v1 used an 'auto' tag; it maps to front for the first image, detail for the rest.
-      let hasFront = p.images.some((i) => i.view === 'front')
-      const images = (
-        await Promise.all(
-          p.images.map(async (i) => {
-            const blob = await get(i.id)
-            if (!blob) return null
-            written.add(i.id)
-            const file = new File([blob], i.name, { type: i.type })
-            return { id: i.id, file, url: URL.createObjectURL(file), view: i.view }
-          }),
-        )
-      )
-        .filter((i) => !!i)
-        .map((i) => {
-          if ((i.view as string) !== 'auto') return i
-          const view = hasFront ? ('detail' as const) : ('front' as const)
-          hasFront = true
-          return { ...i, view }
-        })
-      let segmentation: Segmentation | null = null
-      if (p.segmentation && images.some((i) => i.id === p.segmentation!.imageId && i.view === 'front')) {
-        const segments = await Promise.all(
-          p.segmentation.segments.map(async (g) => {
-            const mask = await get(g.id)
-            if (mask) written.add(g.id)
-            return mask ? { ...g, mask } : null
-          }),
-        )
-        // All or nothing: a partial set of masks would leave holes in the model.
-        if (segments.every((g) => g))
-          segmentation = {
-            ...p.segmentation,
-            prompt: p.segmentation.prompt ?? { object: '', parts: '', auto: true },
-            edited: p.segmentation.edited ?? true,
-            segments: segments as Segmentation['segments'],
-          }
-      }
       // Projects saved before levels existed get one floor.
       const levels = p.plan?.levels?.length ? p.plan.levels : [newLevel('Ground floor')]
       return {
@@ -235,20 +169,15 @@ async function load(): Promise<boolean> {
         tour: { ...DEFAULT_TOUR, ...p.plan?.tour },
         useTour: !!p.useTour,
         objects,
-        images,
         camera: p.camera ?? null,
-        realSize: p.realSize ?? null,
-        autoAngles: p.autoAngles ?? null,
         animation: { ...DEFAULT_ANIMATION, ...p.animation },
-        prompt: { ...DEFAULT_PROMPT, ...p.prompt },
-        segmentation,
       }
     }),
   )
 
   // Don't clobber anything the user did while we were loading.
   const now = useWorkspace.getState()
-  const untouched = now.projects.length === 1 && !now.projects[0].objects.length && !now.projects[0].images.length
+  const untouched = now.projects.length === 1 && !now.projects[0].objects.length
   if (!untouched) return false
   const active = projects.some((p) => p.id === state.activeProjectId) ? state.activeProjectId : projects[0].id
   now.replaceProjects(projects, active)

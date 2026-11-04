@@ -7,6 +7,7 @@ import { catalogItemOf, footprint, objectSize } from '@/plan/footprint'
 import { add, analyse, dist, mul, norm, pointInPolygon, sub, type Face } from '@/plan/geometry'
 import { levelElevations, roomFor } from '@/plan/levels'
 import { DEFAULT_CEILING_FINISH, DEFAULT_FLOOR_FINISH, DEFAULT_WALL_FINISH, OPENING_DEFAULTS, type Finish, type Level, type Vec2 } from '@/plan/types'
+import { photoreal } from './aiPhoto'
 import { activeProject, useWorkspace, type CameraPose, type Project, type SceneObject, type Vec3 } from '@/store/workspace'
 import { download, viewport } from '@/viewport/bridge'
 import { framePose, visibleBox } from '@/viewport/camera'
@@ -78,7 +79,9 @@ function roomShot(face: Face, elevation: number): Shot {
 }
 
 async function render(shot: Shot) {
-  const blob = await viewport.renderShot(shot.pose, { width: RES.w, height: RES.h, ceilings: shot.ceilings, maxLevel: shot.maxLevel, background: shot.background })
+  // A presentation has many 4K shots: path-traced ones are capped at 128 samples (denoised) to keep the export reasonable.
+  const samples = Math.min(128, useWorkspace.getState().settings.samples)
+  const blob = await viewport.renderShot(shot.pose, { width: RES.w, height: RES.h, ceilings: shot.ceilings, maxLevel: shot.maxLevel, background: shot.background, samples })
   if (!blob) throw new Error('Rendering failed.')
   return new Uint8Array(await blob.arrayBuffer())
 }
@@ -276,6 +279,8 @@ export async function exportPdf() {
   const roomShots = rooms.flatMap((r) => r.rooms.map((x) => ({ ...x, level: r.level })))
   const total = 1 + levels.length + roomShots.length
   let done = 0
+  let aiDone = 0
+  const aiErrors: string[] = []
   const progress = (message: string) => useWorkspace.getState().setRenderJob({ kind: 'image', done, total, message })
   const step = async (message: string, shot: Shot | null) => {
     if (cancelled) throw new DOMException('Cancelled', 'AbortError')
@@ -368,7 +373,27 @@ export async function exportPdf() {
     // ── Rooms ──
     for (const r of roomShots) {
       const name = r.info?.name ?? 'Room'
-      const img = await step(`Room · ${name}`, roomShot(r.face, elev.get(r.level.id) ?? 0))
+      let img = await step(`Room · ${name}`, roomShot(r.face, elev.get(r.level.id) ?? 0))
+      // Optional: the render becomes a photograph (OpenAI image model), the room's furniture and finishes in the prompt.
+      const { aiPhotos, openaiKey, aiModel } = useWorkspace.getState().settings
+      if (img && aiPhotos && openaiKey) {
+        if (cancelled) throw new DOMException('Cancelled', 'AbortError')
+        progress(`Photo · ${name} · OpenAI`)
+        const roomFaces = roomsOf(project, r.level).map((x) => x.face)
+        const inRoom = furniture.filter((o) => (o.levelId ?? levels[0].id) === r.level.id && objectRoom(o, roomFaces)?.index === r.face.index)
+        try {
+          const photo = await photoreal(new Blob([img as BlobPart], { type: 'image/jpeg' }), RES, {
+            name,
+            floor: finishName(r.info?.floor ?? DEFAULT_FLOOR_FINISH),
+            walls: finishName(r.info?.walls ?? DEFAULT_WALL_FINISH),
+            furniture: inRoom.map((o) => o.name.replace(/\.\d{3}$/, '').toLowerCase()),
+          }, { key: openaiKey, model: aiModel })
+          img = new Uint8Array(await photo.arrayBuffer())
+          aiDone++
+        } catch (e) {
+          aiErrors.push(`${name}: ${(e as Error).message}`)
+        }
+      }
       doc.addPage()
       page++
       header(doc, `${r.level.name} · room`, name, page)
@@ -520,7 +545,9 @@ export async function exportPdf() {
 
     progress('Writing PDF')
     download(doc.output('blob'), `${project.name.replace(/[^\w.-]+/g, '_') || 'home'}.pdf`)
-    useWorkspace.getState().setJob({ status: 'done', message: `PDF ready · ${page} pages, ${done} renders at 4K` })
+    const ai = aiDone ? ` · ${aiDone} photos by OpenAI` : ''
+    if (aiErrors.length) useWorkspace.getState().setJob({ status: 'error', message: `PDF ready · ${page} pages${ai} · ${aiErrors.length} photo${aiErrors.length === 1 ? '' : 's'} kept as renders`, hint: aiErrors.join('\n') })
+    else useWorkspace.getState().setJob({ status: 'done', message: `PDF ready · ${page} pages, ${done} renders at 4K${ai}` })
   } catch (e) {
     if ((e as Error).name !== 'AbortError') useWorkspace.getState().setJob({ status: 'error', message: (e as Error).message || 'PDF export failed.' })
   } finally {

@@ -24,6 +24,11 @@ export interface CatalogItem {
   model?: { file: string; credit: string; license: string }
   /** Short note in the catalog. */
   note?: string
+  /**
+   * Lamps: the bulb's default output. The light sits on the piece's glowing (emissive) parts, or at
+   * `at` (fractions of its size: x and z from the centre, y from the bottom) when it has none.
+   */
+  light?: { lumens: number; kelvin: number; at?: Vec3 }
 }
 
 const W = (color: string, preset?: string) => ({ color, preset })
@@ -90,11 +95,11 @@ export const CATALOG: CatalogItem[] = [
   { id: 'wall-shelf', name: 'Wall shelf', category: 'Office', size: [0.9, 0.03, 0.24], kind: 'parametric', mount: 'wall', y: 1.5, slots: { Wood: OAK } },
 
   // Lighting
-  { id: 'floor-lamp', name: 'Floor lamp', category: 'Lighting', size: [0.42, 1.6, 0.42], kind: 'parametric', mount: 'floor', slots: { Shade: W('#efe9de', 'linen'), Frame: W('#c9a45c', 'brass') } },
-  { id: 'pendant', name: 'Pendant light', category: 'Lighting', size: [0.42, 0.7, 0.42], kind: 'parametric', mount: 'ceiling', slots: { Shade: BLACK_METAL } },
-  { id: 'barn-lamp', name: 'Barn pendant', category: 'Lighting', size: [0.19, 0.26, 0.23], kind: 'model', mount: 'ceiling', model: { file: 'AnisotropyBarnLamp.glb', credit: 'Eric Chadwick · Khronos glTF Sample Assets', license: 'CC BY 4.0' } },
-  { id: 'arc-lamp', name: 'Arc floor lamp', category: 'Lighting', size: [1.13, 1.86, 0.72], kind: 'model', mount: 'floor', model: { file: 'LightsPunctualLamp.glb', credit: 'DGG · Khronos glTF Sample Assets', license: 'CC BY 4.0' } },
-  { id: 'iridescent-lamp', name: 'Iridescent table lamp', category: 'Lighting', size: [0.3, 0.48, 0.3], kind: 'model', mount: 'floor', model: { file: 'IridescenceLamp.glb', credit: 'Eric Chadwick · Khronos glTF Sample Assets', license: 'CC BY 4.0' } },
+  { id: 'floor-lamp', name: 'Floor lamp', category: 'Lighting', size: [0.42, 1.6, 0.42], kind: 'parametric', mount: 'floor', slots: { Shade: W('#efe9de', 'linen'), Frame: W('#c9a45c', 'brass') }, light: { lumens: 1000, kelvin: 2700 } },
+  { id: 'pendant', name: 'Pendant light', category: 'Lighting', size: [0.42, 0.7, 0.42], kind: 'parametric', mount: 'ceiling', slots: { Shade: BLACK_METAL }, light: { lumens: 900, kelvin: 2700 } },
+  { id: 'barn-lamp', name: 'Barn pendant', category: 'Lighting', size: [0.19, 0.26, 0.23], kind: 'model', mount: 'ceiling', model: { file: 'AnisotropyBarnLamp.glb', credit: 'Eric Chadwick · Khronos glTF Sample Assets', license: 'CC BY 4.0' }, light: { lumens: 600, kelvin: 2400, at: [0, 0.25, 0] } },
+  { id: 'arc-lamp', name: 'Arc floor lamp', category: 'Lighting', size: [1.13, 1.86, 0.72], kind: 'model', mount: 'floor', model: { file: 'LightsPunctualLamp.glb', credit: 'DGG · Khronos glTF Sample Assets', license: 'CC BY 4.0' }, light: { lumens: 1200, kelvin: 2700, at: [0.4, 0.85, 0] } },
+  { id: 'iridescent-lamp', name: 'Iridescent table lamp', category: 'Lighting', size: [0.3, 0.48, 0.3], kind: 'model', mount: 'floor', model: { file: 'IridescenceLamp.glb', credit: 'Eric Chadwick · Khronos glTF Sample Assets', license: 'CC BY 4.0' }, light: { lumens: 400, kelvin: 2700, at: [0, 0.62, 0] } },
 
   // Decor
   { id: 'plant', name: 'Potted plant', category: 'Decor', size: [0.7, 0.84, 0.66], kind: 'model', mount: 'floor', model: { file: 'DiffuseTransmissionPlant.glb', credit: 'Eric Chadwick, Rico Cilliers · Khronos glTF Sample Assets', license: 'CC BY 4.0' } },

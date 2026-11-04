@@ -1,6 +1,13 @@
 import type { Object3D } from 'three'
 import type { CameraPose, SceneObject, Transform } from '@/store/workspace'
 
+/** Path tracer state in the Rendered view, for the sample counter. */
+export interface TraceProgress {
+  state: 'off' | 'building' | 'sampling' | 'done'
+  samples: number
+  max: number
+}
+
 export interface VideoResult {
   blob: Blob
   extension: string
@@ -19,6 +26,8 @@ export const viewport = {
   /** Fit the 2D plan to the view. */
   fitPlan: () => {},
   invalidate: () => {},
+  traceProgress: { state: 'off', samples: 0, max: 0 } as TraceProgress,
+  onTraceProgress: null as ((p: TraceProgress) => void) | null,
   exportGlb: async (_id: string): Promise<Blob | null> => null,
   exportScene: async (): Promise<Blob | null> => null,
   /** The object's current placement expressed relative to `parentId` (null = the scene). */
@@ -33,7 +42,7 @@ export const viewport = {
   orbitRadius: (_pose: CameraPose): number | null => null,
   renderStill: async (): Promise<Blob | null> => null,
   /** Render one shot at its own size, with ceilings/levels as asked (PDF pages). */
-  renderShot: async (_pose: CameraPose, _opts: { width: number; height: number; transparent?: boolean; ceilings: boolean; maxLevel: number | null; background?: string }): Promise<Blob | null> => null,
+  renderShot: async (_pose: CameraPose, _opts: { width: number; height: number; transparent?: boolean; ceilings: boolean; maxLevel: number | null; background?: string; samples?: number }): Promise<Blob | null> => null,
   renderVideo: async (_onFrame: (done: number, total: number) => void, _signal: AbortSignal): Promise<VideoResult | null> => null,
 }
 

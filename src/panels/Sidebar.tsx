@@ -1,18 +1,16 @@
-import { Armchair, Camera, Layers } from 'lucide-react'
+import { Armchair, Layers } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { Catalog } from './Catalog'
-import { InputsPanel } from './InputsPanel'
 import { Outliner } from './Outliner'
 
-type Tab = 'catalog' | 'scene' | 'photo'
+type Tab = 'catalog' | 'scene'
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: 'catalog', label: 'Furniture', icon: <Armchair className="size-3.5" /> },
   { id: 'scene', label: 'Scene', icon: <Layers className="size-3.5" /> },
-  { id: 'photo', label: 'Photo → 3D', icon: <Camera className="size-3.5" /> },
 ]
 
-/** Furniture catalog, the scene tree, and custom pieces from a photo (SAM 3D). */
+/** Furniture catalog and the scene tree. */
 export function Sidebar() {
   const [tab, setTab] = useState<Tab>('catalog')
   return (
@@ -30,7 +28,7 @@ export function Sidebar() {
           </button>
         ))}
       </div>
-      <div className="min-h-0 flex-1">{tab === 'catalog' ? <Catalog /> : tab === 'scene' ? <Outliner /> : <InputsPanel />}</div>
+      <div className="min-h-0 flex-1">{tab === 'catalog' ? <Catalog /> : <Outliner />}</div>
     </div>
   )
 }

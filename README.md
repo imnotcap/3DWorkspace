@@ -1,10 +1,14 @@
 # 3D Workspace · home planner
 
-A browser app for planning interiors: draw the floor plan and the house builds itself in 3D (walls, doors, windows, floors, ceilings, several storeys). Paint walls, choose floors, furnish it from a catalog, walk through it on video, and export the whole design as a presentation PDF with 4K renders. It's a static site that deploys to GitHub Pages; projects are saved in your browser.
+A browser app for planning interiors: draw the floor plan and the house builds itself in 3D (walls, doors, windows, floors, ceilings, several storeys). Paint walls, choose floors, furnish it from a catalog, light it with real lamps, walk through it on a path-traced 4K video, and export the whole design as a presentation PDF. It's a static site that deploys to GitHub Pages; projects are saved in your browser.
 
 ## Stack
 
-Vite · React 19 · TypeScript · Tailwind v4 · Motion · React Three Fiber + drei (three.js) · Zustand · react-resizable-panels · jsPDF + svg2pdf.js
+Vite · React 19 · TypeScript · Tailwind v4 · Motion · React Three Fiber + drei (three.js) · three-gpu-pathtracer · Zustand · react-resizable-panels · jsPDF + svg2pdf.js
+
+## Workspaces
+
+The app opens on **Workspaces**: every project you have (with a plan preview, floor area and number of pieces), a blank plan, and the furnished templates. Open one to go to the planner; **Workspaces** at the top left goes back. Double-click a name to rename it.
 
 ## Plan your home
 
@@ -21,6 +25,7 @@ The workspace shows the **plan** (2D), the **3D view**, or both side by side (**
 
 - **Rooms are found automatically** from the walls: each enclosed space becomes a room with its floor area (inside the walls), name and finishes. Walls are mitred at corners and trimmed at T-joints; openings are cut exactly.
 - **Floors:** add storeys with **+** next to the level tabs. Each floor has its own ceiling height; the floor above sits on its slab. The level below shows faintly in the plan for alignment, and **Straight stairs** from the catalog cut the opening in the floor above.
+- **Resize in the plan:** select a door or window and drag either end to make it wider or narrower; select a piece of furniture (or any model) and drag the handle on any side to change its width or depth, the opposite side stays put. The 3D view follows live.
 - **Inspector** (right): wall length, thickness and height (lower = half wall); door and window type, size, sill, hinge side, swing side and how far it stands open; room name; floor height.
 - **Templates:** a furnished two-bedroom apartment, a two-storey house, or an empty plan.
 - Undo/redo covers the plan, the furniture and the finishes.
@@ -35,11 +40,14 @@ The **Furniture** tab has about 50 pieces in 9 categories (living, dining, kitch
 
 - **Parametric pieces** are built from their size, so you can type any width, height and depth in the Inspector and the piece is rebuilt to fit: a wider sofa gets more seat cushions, a wider wardrobe more doors, kitchen cabinets keep their plinth and worktop. Every material slot (fabric, legs, fronts, worktop, handles…) takes any finish from the library.
 - **Photoreal pieces** (velvet and leather sofas, armchairs, a silk pouf, lamps, a plant, flowers) are production-quality models from the [Khronos glTF Sample Assets](https://github.com/KhronosGroup/glTF-Sample-Assets) (CC0 / CC BY 4.0, credited in the PDF). `npm run models` downloads them at build time.
-- **Your own pieces:** import a .glb, or make one from a photo with SAM 3D (below).
+- **Previews:** every catalog card shows a rendered picture of the piece in its default finishes, so you see what you're placing.
+- **Never inside a wall:** a piece can stand right against a wall or in a corner, but wherever it's moved, rotated, resized or loaded (and when a wall is moved into it) it is pushed the shortest way back out, so nothing flickers half inside a wall. Doorways and the space under a window sill let pieces through; rugs lie under everything.
+- **Lamps give real light:** floor lamps, pendants and the lamp models light the room. Select one to switch it on or off, pick a bulb colour temperature (candle to daylight) or any colour, and set its brightness in lumens. Other pieces show their materials and colours per surface in the same panel.
+- **Your own pieces:** import a .glb.
 
 ## Walkthrough video
 
-Make a tour in the **Tour** tool (or **Auto tour**: it walks from the front door through every room, opening the doors on its way). With *Camera: follows the tour* (Inspector), the render camera walks the path at eye height with a gentle start and stop; the timeline covers the whole walk. Press **0** and **Space** to watch it in the 3D view, **Ctrl+F12** to render it to MP4 at any resolution up to 4K. Speed, lens and eye height are in the Inspector.
+Make a tour in the **Tour** tool (or **Auto tour**: it walks from the front door through every room, opening the doors on its way). The camera walks the path at eye height like a steadicam: a smooth curve through the points, a heading averaged over the next couple of metres so it turns into corners gently, and an eased start and stop. The **tour bar** under the view plays it (Space, sub-frame playback so it's smooth on any screen), scrubs it, sets 30 or 60 fps, and renders it: **Render tour** (Ctrl+F12) path traces every frame at the output resolution (4K by default) and encodes an MP4. Samples per frame, bounces and denoising are in the Render panel.
 
 ## PDF export
 
@@ -50,47 +58,13 @@ Make a tour in the **Tour** tool (or **Auto tour**: it walks from the front door
 3. Per room: a 4K interior render from the corner that sees the most of it, its area and ceiling height, floor, wall and ceiling finishes as swatches, a key plan with the room highlighted, and the furniture in it.
 4. Schedules: finishes, doors and windows (by type and size), and furniture (size, room, finishes); then credits.
 
-## Furniture from a photo: Meta SAM 3D
-
-In the **Photo → 3D** tab, a photo of a piece of furniture becomes an editable 3D model, built by Meta's **SAM 3** and **SAM 3D Objects** on your own SAM 3D server ([worker/sam3d](worker/sam3d/README.md): Docker on an NVIDIA GPU with 32 GB+, locally, on a rented GPU or as a Hugging Face Space).
-
-1. **Front photo.** Add a photo of the object and tag it **Front** (the first photo is tagged Front automatically). Other photos stay as your reference; SAM 3D builds from one photo.
-2. **What is it, and its parts.** Name the object ("office chair") and, optionally, its parts ("seat, backrest, armrest, wheel"). With no part names, SAM 3 finds the parts by itself (or, with *Find parts* off in Generate settings, the whole object is one part).
-3. **Review parts** (optional). The part editor shows every part over the photo, with pixel-exact outlines. Click on the photo to add or correct a part (each click refines it; Shift/Alt-click excludes an area), merge parts, rename them, or leave some out. Parts never overlap and always cover the whole object, so nothing is built twice and nothing goes missing.
-4. **Generate with SAM 3D.** Each part is built with its texture and its pose in the photo. All parts share the photo's camera and depth, so they come back already fitted together. The model is then stood upright (by its largest part's own up axis, or by the photo's horizon), set on the floor, and scaled to *Real size* if you entered it. The photo's camera becomes the default render angle.
-
-If you change the object or part names before generating, the parts are found again, unless you edited them by hand (then your edits are kept).
-
-### Editing a model part by part
-
-A SAM 3D model is a tree: **model → groups → parts**. Repeated parts (four legs) are grouped in a folder.
-
-- **Outliner:** open the model with its chevron to see its groups and parts. Click any row to select that piece, double-click to rename. Hiding a model or group hides everything in it.
-- **Part dropdown** (Object panel, N): pick the whole model, a group or any single part.
-- **Viewport:** the first click selects the whole model, each further click goes one level deeper (group, then part). Double-click goes straight to the part.
-- Each part keeps its own location, rotation, scale, size, material, shading and keyframes, relative to its model, so moving the model moves all of its parts. Duplicating or deleting a model or group includes everything in it.
-- **Take out of model** (Object panel, or the Object menu) makes a part a standalone object, exactly where it is.
-- **Export Selected** exports a part where it sits in the scene; **Export Scene** keeps the model's part hierarchy.
-
-### Accuracy
-
-- SAM 3D estimates metric size from the photo's depth, so models come out roughly real size. For exact size, enter the spec-sheet dimensions under **Real size (cm)** before generating, or edit **Size (cm)** in the Object panel afterwards (whole model or any part).
-- **Quality** (Generate settings): Draft, Standard (Meta's default steps), High and Ultra (more sampling steps and a baked texture). From Standard up, each part's pose is refined against the photo's depth so the parts line up.
-- The same seed and photo give the same parts.
-
-The scene is metric: 1 unit = 1 m, the grid has 10 cm cells and 1 m sections.
+**Photos with ChatGPT (optional):** turn on *PDF photos* in the Render panel and paste an OpenAI API key. Each room's path-traced render is then sent to OpenAI's image model (`gpt-image-1` by default, the model behind ChatGPT's images) with a prompt describing the room, its finishes and its furniture, and comes back as a photograph of the same room. If a photo fails, that page keeps the render and the export says why. The key is kept in memory only (unless *Remember key*), goes only to api.openai.com, and is never saved with projects or exports; it uses your own OpenAI credits.
 
 ## Develop
 
 ```bash
 npm install
 npm run dev
-```
-
-Without a GPU, run the SAM 3D server in mock mode (stand-in models, same API) and leave **Server** at `http://localhost:7860`:
-
-```bash
-cd worker/sam3d && pip install -r requirements-dev.txt && MOCK=1 python app.py
 ```
 
 ## Deploy
@@ -115,9 +89,8 @@ Push to `main`. `.github/workflows/deploy.yml` builds and publishes to Pages. En
 | Click / double-click in the viewport | Select the model, then one level deeper per click / straight to the part |
 | ⌘/Ctrl + Z, ⇧⌘/Ctrl + Z | Undo, redo (add, delete, transforms, shading, materials) |
 | 0 / Ctrl + Alt + 0 | Camera view / align camera to view |
-| Space, ← →, Shift + ← → | Play/pause, step frame, jump to start/end |
-| I / Alt + I | Insert / delete keyframe (selected object, or the camera) |
-| Ctrl + F12 | Render animation |
+| Space, Shift + ← → | Play/pause the tour, jump to its start/end |
+| Ctrl + F12 | Render the tour video |
 | Shift + N | New project tab |
 | V / W / M / D / O / T | Plan tools: select, wall, room, door, window, tour |
 | R (while placing furniture) | Rotate the piece 90° |
@@ -133,6 +106,7 @@ Transform fields in the Object panel (N) are drag-to-scrub: drag to change, Shif
 - Shading modes swap shared materials instead of cloning them. The environment is procedural (no HDRI download).
 - The gizmo moves the three.js object directly. The store is only updated on release (one undo step).
 - Raycasting uses `three-mesh-bvh`, built in idle time: picking a 1M-triangle mesh takes about 0.1 ms.
+- The path tracer re-bakes the scene (BVH built in a Web Worker) only when something actually changed, and only after you stop dragging.
 - Each model suspends and fails on its own. A broken file is flagged in the outliner without affecting the viewport.
 
 ## Modelling it yourself
@@ -144,44 +118,32 @@ No generator or quota needed:
 - **Transform:** G/R/S or the gizmo, or type Location, Rotation and Size. **Shift+D** duplicates.
 - **Export Scene (.glb):** every visible object, with its materials, in one file.
 
-Primitives get the same materials, keyframes, renders and undo as everything else. To fix one piece of a SAM 3D model by hand, take it out of the model and model a replacement next to it.
+Primitives get the same materials, renders and undo as everything else.
 
 ## Materials
 
-The Object panel lists every surface of an object. With a SAM 3D model, select a part to give it its own material (the steel frame, the wooden top). Each surface gets a material from the library and a colour:
+The Object panel lists every surface of an object (a sofa's fabric and legs, a cabinet's fronts, worktop and handles). Each surface gets a material from the library and a colour:
 
 - **Library:** 26 presets in 7 categories (metals, powder coats and paints, plastics, wood, stone, glass, fabric), using physical properties: clearcoat, glass transmission, fabric sheen.
 - **Textures:** CC0 PBR maps (colour, normal, roughness, metalness, AO) from [ambientCG](https://ambientcg.com), downloaded at build time by `npm run textures` (see `scripts/ambientcg.config.json`; pin an asset with `"id"`). Without them, each preset falls back to a procedural texture. Primitives get metric UVs, so a texture has the same real-world scale on every part.
 - **Colour:** a palette of 16 standard colours (RAL-style) plus a custom picker. On textured materials, a colour you pick tints the texture.
 
-## Tokens
+## Keys
 
-This site has no keys of its own. A Hugging Face token is only needed if your SAM 3D server is a private Space:
+This site has no keys of its own. The only key is yours, for the optional OpenAI PDF photos: it stays in memory unless you choose *Remember key*, and the deploy workflow runs `npm run check:secrets`, which fails the build if anything resembling a key ends up in the published site.
 
-- It is kept **in memory only** by default and is gone when you close the tab. *Remember on this device* stores it in the browser's localStorage. *Forget my keys* removes it.
-- It is sent only to Hugging Face, never saved with projects or included in exports.
-- The deploy workflow runs `npm run check:secrets`, which fails the build if anything resembling a key ends up in the published site.
+## Rendering: path tracing like Cycles
 
-## Rendering & animation
-
-- **Render camera:** framed automatically (front three-quarter, slightly above, 50 mm), or set it from any view (Ctrl+Alt+0). Press **0** to look through it. Orbiting in camera view moves the camera itself.
-- **Reference overlay:** fades the Front photo over the camera frame so you can match the photo's angle. *Match photo aspect* sets the output to the photo's proportions at 4K.
-- **Resolution:** presets up to 4K UHD, square 4K and portrait 4K, or any custom size up to your GPU's limit. Optional transparent PNG.
-- **Timeline:** keyframes for objects and the camera, Blender-style. Select an object and press **I** to key its location, rotation and scale at the current frame. With nothing selected, I keys the camera. Once an object has keys, moving, rotating or scaling it (gizmo or Object panel) updates the key at the current frame. Each animated object gets its own track. Per track (camera or each object), choose how keys blend: **Smooth** (ease in/out), **Linear** (constant speed) or **Hold** (no blending, jumps at each key; shown dashed). Playback (Space), and **Turntable**, which spins the selected object 360° (or orbits the camera) as a seamless loop.
-- Automatic framing covers the objects across the whole animation, so the camera doesn't zoom as things move.
-- **Render Animation (Ctrl+F12):** renders offline, frame by frame, at full output resolution, and encodes in the browser (WebCodecs: H.264 MP4, falling back to VP9/AV1/VP8). The output doesn't depend on viewport size or real-time FPS.
-- Renders always use the final look (materials, shadows), whatever the viewport shading is.
-
-## Mesh quality
-
-- **Shading:** *Auto* (default) smooths surfaces but keeps hard edges above 30°, like Blender's Auto Smooth. It's computed in a Web Worker and keeps per-vertex colours.
-- **Materials:** override per part with presets (powder-coat black, aluminium, chrome, oak…) or custom colour, roughness and metallic. You can tint the generated texture instead.
-
-Generated meshes are as good as SAM 3D Objects makes them: a convincing shape and texture for each part, with occluded sides completed by the model. Small features (buttons, engraved text) come from the texture, not the geometry.
+- **Rendered view (Z, last ball):** the viewport is path traced on the GPU (three-gpu-pathtracer), refining sample by sample like Cycles' viewport, with a sample counter at the top. Light bounces between surfaces, sun and sky come in through real glass, lamps cast soft pools of light, and bright bulbs and windows get a soft glare (bloom). While you orbit or edit, it shows the real-time render and picks up again as soon as you stop.
+- **Engine** (Render panel): *Path tracing · Cycles* (default) or *Real-time · Eevee* for quick output. Samples for images, samples per video frame, viewport samples, bounces and denoise are all there.
+- **Daylight:** Day, Evening (low warm sun) or Night (only your lamps): the sky, the sun and the view through the windows follow it, in the viewport and in every render.
+- **Images (F12), tour videos (Ctrl+F12) and PDF pages** use the same engine at full output resolution, up to 4K and beyond, independent of the viewport's size. Big frames are traced in tiles. PDF pages are capped at 128 samples (denoised) so a whole presentation stays reasonable.
+- **Render camera:** framed automatically or set from any view (Ctrl+Alt+0); **0** looks through it. With a tour, the camera walks the tour.
+- Materials: physical (clearcoat, sheen, transmission). Glass in windows and showers is real refractive glass, so daylight passes through it in the path tracer.
 
 ## Persistence
 
-Projects, meshes, the part tree, transforms, input photos and part masks are saved to IndexedDB, so a reload restores your work. Settings are kept in `localStorage`. Nothing leaves the browser except the Front photo and part masks you send to your SAM 3D server.
+Projects, meshes, transforms and lamp settings are saved to IndexedDB, so a reload restores your work. Settings are kept in `localStorage`. Nothing leaves the browser, except the room renders you choose to send to OpenAI for PDF photos.
 
 ## Credits
 

@@ -10,6 +10,7 @@ const DIR = process.argv[2] ?? 'dist'
 const PATTERNS = [
   ['Anthropic API key', /sk-ant-[A-Za-z0-9_-]{20,}/],
   ['Hugging Face token', /\bhf_[A-Za-z0-9]{30,}\b/],
+  ['OpenAI API key', /\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{40,}\b/],
 ]
 const TEXT = /\.(html|js|mjs|css|json|map|txt|svg)$/i
 

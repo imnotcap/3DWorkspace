@@ -7,8 +7,9 @@ import { objectTransformAt } from '@/lib/anim'
 import { viewport } from './bridge'
 import { applyPose, evaluate, focalToFov, framePose, frameRect, orbitRadius, poseFromCamera, sceneBox } from './camera'
 import { tourFrames, tourPath, tourPose } from '@/plan/tour'
+import { getEngine } from './Renderer'
+import { daylight } from './sky'
 
-const SKY = new Color('#dfe6ec')
 const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()))
 const yieldToUi = () => new Promise<void>((r) => setTimeout(r, 0))
 
@@ -52,14 +53,14 @@ function autoPose(): CameraPose {
     }
     applyObjectsAt(s.frame)
   }
-  const angles = p.autoAngles ?? { azimuth: MathUtils.degToRad(18), polar: MathUtils.degToRad(76) }
+  const angles = { azimuth: MathUtils.degToRad(18), polar: MathUtils.degToRad(76) }
   const pose = framePose(box, { ...angles, focal: 50 }, aspect)
   autoCache = { project: p, aspect, pose }
   return pose
 }
 
 /** The walkthrough drives the camera when it is on and has a path. */
-export const tourActive = (p: { useTour: boolean; tour: { points: unknown[] } }) => p.useTour && p.tour.points.length > 1
+export const tourActive = (p: { useTour: boolean; tour: { points: unknown[] } }) => p.tour.points.length > 1
 
 let pathCache: { key: unknown; levels: unknown; path: ReturnType<typeof tourPath> } | null = null
 /** Render camera at `frame`: tour → keyframes → static camera → automatic product framing. */
@@ -81,7 +82,12 @@ export interface ShotOptions {
   /** Highest level index shown (null = all). */
   maxLevel: number | null
   background?: string
+  /** Path-tracing samples (ignored by the real-time engine). */
+  samples?: number
 }
+
+/** Offline draw: put the scene at `frame`, then render it through the final pipeline. */
+type Draw = (pose: CameraPose, frame: number, o?: { samples?: number; rebuild?: boolean; onSample?: (n: number) => void; signal?: AbortSignal }) => Promise<void>
 
 /**
  * Offline renderer: resizes the drawing buffer to the output resolution, draws each
@@ -92,7 +98,7 @@ export function RenderBridge() {
   const { gl, scene, invalidate } = useThree()
 
   useEffect(() => {
-    async function session<T>(opts: ShotOptions, fn: (draw: (pose: CameraPose, frame: number) => void, w: number, h: number) => Promise<T>) {
+    async function session<T>(opts: ShotOptions, fn: (draw: Draw, w: number, h: number) => Promise<T>) {
       const s = useWorkspace.getState()
       const w = opts.width
       const h = opts.height
@@ -108,6 +114,8 @@ export function RenderBridge() {
         for (let i = 0; i < 3; i++) (invalidate(), await nextFrame())
       }
 
+      const engine = getEngine()
+      if (engine) engine.offline = true
       const hidden: Object3D[] = []
       const toggled: [Object3D, boolean][] = []
       scene.traverse((o) => {
@@ -132,14 +140,19 @@ export function RenderBridge() {
         scene.background = null
         gl.setClearColor(0x000000, 0)
       } else if (opts.background) scene.background = new Color(opts.background)
-      else if (opts.ceilings) scene.background = SKY // daylight through the windows of interior shots
+      else if (opts.ceilings) scene.background = daylight(s.settings.ambience).background.clone() // the sky through the windows of interior shots
       gl.setPixelRatio(1)
       gl.setSize(w, h, false)
       const cam = new PerspectiveCamera()
-      const draw = (pose: CameraPose, frame: number) => {
+      const pathtrace = s.settings.engine === 'pathtrace'
+      let first = true
+      const draw: Draw = async (pose, frame, o = {}) => {
         applyObjectsAt(frame)
         applyPose(cam, pose, w / h)
-        gl.render(scene, cam)
+        const rebuild = first || !!o.rebuild
+        first = false
+        if (engine) await engine.final(scene, cam, { pathtrace, samples: o.samples ?? opts.samples ?? useWorkspace.getState().settings.samples, rebuild, onSample: o.onSample, signal: o.signal })
+        else gl.render(scene, cam)
       }
       try {
         return await fn(draw, w, h)
@@ -151,6 +164,7 @@ export function RenderBridge() {
         gl.setClearColor(prevClear, prevAlpha)
         hidden.forEach((o) => (o.visible = true))
         toggled.forEach(([o, v]) => (o.visible = v))
+        if (engine) engine.offline = false
         if (prevShading !== 'rendered') useWorkspace.getState().setShading(prevShading)
         invalidate()
       }
@@ -175,14 +189,19 @@ export function RenderBridge() {
 
     viewport.renderShot = (pose, opts) =>
       session(opts, async (draw) => {
-        draw(pose, useWorkspace.getState().frame)
+        await draw(pose, useWorkspace.getState().frame)
         return new Promise<Blob | null>((res) => gl.domElement.toBlob(res, opts.transparent ? 'image/png' : 'image/jpeg', 0.92))
       })
 
     viewport.renderStill = () =>
       session(current(), async (draw) => {
         const f = useWorkspace.getState().frame
-        draw(poseAt(f), f)
+        const samples = useWorkspace.getState().settings.samples
+        const { renderWidth: rw, renderHeight: rh, engine: eng } = useWorkspace.getState().settings
+        await draw(poseAt(f), f, {
+          samples,
+          onSample: (n) => eng === 'pathtrace' && useWorkspace.getState().setRenderJob({ kind: 'image', done: Math.floor(n), total: samples, message: `${rw}×${rh} · sample ${Math.floor(n)} / ${samples}` }),
+        })
         // toBlob snapshots the drawing buffer synchronously, before it's cleared.
         return new Promise<Blob | null>((res) => gl.domElement.toBlob(res, 'image/png'))
       })
@@ -204,12 +223,15 @@ export function RenderBridge() {
         const source = new mb.CanvasSource(frameCanvas, { codec, bitrate: mb.QUALITY_VERY_HIGH, keyFrameInterval: 2 })
         output.addVideoTrack(source, { frameRate: anim.fps })
         await output.start()
+        // Moving objects have to be re-baked for the path tracer every frame; a moving camera doesn't.
+        const animated = proj.objects.some((o) => o.keys?.length)
+        const samples = useWorkspace.getState().settings.videoSamples
         for (let i = 0; i < total; i++) {
           if (signal.aborted) {
             await output.cancel()
             throw new DOMException('Cancelled', 'AbortError')
           }
-          draw(poseAt(anim.start + i), anim.start + i)
+          await draw(poseAt(anim.start + i), anim.start + i, { samples, rebuild: animated, signal })
           ctx2d.drawImage(gl.domElement, 0, 0)
           await source.add(i / anim.fps, 1 / anim.fps)
           onFrame(i + 1, total)

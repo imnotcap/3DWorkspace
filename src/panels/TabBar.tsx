@@ -27,7 +27,6 @@ export function TabBar() {
           { label: redoLabel ? `Redo ${redoLabel}` : 'Redo', shortcut: '⇧⌘Z', onSelect: useWorkspace.getState().redo, disabled: !redoLabel },
           { separator: true, label: '' },
           { label: 'Import GLB…', shortcut: '⌘I', onSelect: actions.importGlb },
-          { label: 'Add Images…', onSelect: actions.addImages },
           { separator: true, label: '' },
           { label: 'Render Image', shortcut: 'F12', onSelect: actions.renderImage },
           { label: 'Render Animation', shortcut: '⌃F12', onSelect: actions.renderAnimation },
@@ -35,9 +34,10 @@ export function TabBar() {
           { label: 'Export Scene (.glb)', onSelect: actions.exportScene },
         ]}
       />
-      <div className="flex h-7 items-center gap-1 rounded-md bg-panel-2 px-2 text-dim">
+      <button type="button" title="All workspaces" onClick={() => useWorkspace.getState().setScreen('home')} className="flex h-7 items-center gap-1.5 rounded-md bg-panel-2 px-2 text-xs text-dim transition-colors hover:text-fg">
         <Box className="size-3.5 text-fg" strokeWidth={1.75} />
-      </div>
+        Workspaces
+      </button>
 
       <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [scrollbar-width:none]">
         {projects.map((p) => {

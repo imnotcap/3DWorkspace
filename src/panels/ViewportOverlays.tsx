@@ -1,10 +1,8 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { Aperture, Grid3x3, Hash, Layers, SlidersHorizontal, X } from 'lucide-react'
+import { Aperture, Grid3x3, Layers, SlidersHorizontal, X } from 'lucide-react'
 import { PRIMITIVES } from '@/lib/primitives'
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
-import { cancelGeneration } from '@/generation/run'
 import { actions } from '@/lib/actions'
-import { cn } from '@/lib/cn'
 import { ancestorIds, useActiveProject, useWorkspace, type PropertyTab, type ShadingMode } from '@/store/workspace'
 import { viewport } from '@/viewport/bridge'
 import { frameRect } from '@/lib/frame'
@@ -40,7 +38,7 @@ export function ViewportHeader() {
           { separator: true, label: '' },
           { label: 'Grid', checked: showGrid, onSelect: () => updateSettings({ showGrid: !showGrid }) },
           { label: 'Statistics', checked: showStats, onSelect: () => updateSettings({ showStats: !showStats }) },
-          { label: 'Timeline', checked: showTimeline, onSelect: () => updateSettings({ showTimeline: !showTimeline }) },
+          { label: 'Tour bar', checked: showTimeline, onSelect: () => updateSettings({ showTimeline: !showTimeline }) },
           { separator: true, label: '' },
           { label: 'Camera View', shortcut: '0', checked: cameraView, onSelect: actions.toggleCameraView },
           { label: 'Align Camera to View', shortcut: '⌃⌥0', onSelect: actions.cameraFromView },
@@ -68,7 +66,6 @@ export function ViewportHeader() {
         items={[
           ...PRIMITIVES.map((p) => ({ label: p.label, onSelect: () => (actions.addPrimitive(p.label), setPropertyTab('object')) })),
           { separator: true, label: '' },
-          { label: 'Mesh from Images…', onSelect: () => (setPropertyTab('generate'), actions.addImages()) },
           { label: 'Import GLB…', onSelect: actions.importGlb },
         ]}
       />
@@ -126,7 +123,6 @@ const SHADING: { id: ShadingMode; label: string }[] = [
 ]
 
 const TABS: { id: Exclude<PropertyTab, null>; label: string; icon: ReactNode }[] = [
-  { id: 'generate', label: 'Generate', icon: <Hash className="size-3.5" /> },
   { id: 'object', label: 'Object', icon: <SlidersHorizontal className="size-3.5" /> },
   { id: 'render', label: 'Render', icon: <Aperture className="size-3.5" /> },
 ]
@@ -186,6 +182,33 @@ export function ViewportSideStrip() {
         )}
       </AnimatePresence>
     </>
+  )
+}
+
+/* ───────── Path tracing progress (top centre) ───────── */
+
+/** Blender-style "Sample 34/1024" while the Rendered view path traces. */
+export function TraceStatus() {
+  const [p, setP] = useState(viewport.traceProgress)
+  useEffect(() => {
+    let last = ''
+    viewport.onTraceProgress = (next) => {
+      const key = `${next.state}:${next.samples}:${next.max}`
+      if (key !== last) {
+        last = key
+        setP({ ...next })
+      }
+    }
+    return () => void (viewport.onTraceProgress = null)
+  }, [])
+  const shading = useWorkspace((s) => s.shading)
+  if (shading !== 'rendered' || p.state === 'off') return null
+  const label = p.state === 'building' ? 'Path tracing · preparing scene' : p.state === 'done' ? `Path traced · ${p.samples} samples` : `Path tracing · sample ${p.samples} / ${p.max}`
+  return (
+    <div className="pointer-events-none absolute left-1/2 top-11 z-10 -translate-x-1/2 rounded-md bg-panel-2/85 px-2.5 py-1 font-mono text-2xs text-dim backdrop-blur-md">
+      {label}
+      {p.state === 'sampling' && <span className="ml-2 inline-block h-1 w-16 overflow-hidden rounded-full bg-app align-middle"><span className="block h-full bg-accent" style={{ width: `${(p.samples / p.max) * 100}%` }} /></span>}
+    </div>
   )
 }
 
@@ -264,11 +287,6 @@ export function JobCard() {
                   />
                 )}
               </div>
-              <div className="mt-2.5 flex justify-end">
-                <Button variant="ghost" className="h-6 px-2" onClick={cancelGeneration}>
-                  Cancel
-                </Button>
-              </div>
             </>
           )}
           {job.status === 'error' && (
@@ -295,46 +313,14 @@ export function JobCard() {
   )
 }
 
-/* ───────── Empty state + drop target ───────── */
-
-export function EmptyState({ dragging }: { dragging: boolean }) {
-  const project = useActiveProject()
-  const show = dragging || project.objects.length === 0
-  return (
-    <AnimatePresence>
-      {show && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.15 }}
-          className={cn('pointer-events-none absolute inset-0 z-10 grid place-items-center', dragging && 'bg-accent/[0.04]')}
-        >
-          <div
-            className={cn(
-              'flex flex-col items-center gap-1.5 rounded-xl border border-dashed px-10 py-7 text-center transition-colors duration-150',
-              dragging ? 'border-accent/70 bg-panel-2/80' : 'border-line-strong/80 bg-panel/40',
-            )}
-          >
-            <span className="text-sm text-fg">{dragging ? 'Release to add' : 'Drop reference images'}</span>
-            <span className="text-2xs text-dim">Photos go to Inputs · .glb files import directly · or model it yourself with Add → Box</span>
-          </div>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  )
-}
-
 /* ───────── Camera frame (passepartout + reference photo) ───────── */
 
 export function CameraFrame() {
   const active = useWorkspace((s) => s.cameraView)
   const w = useWorkspace((s) => s.settings.renderWidth)
   const h = useWorkspace((s) => s.settings.renderHeight)
-  const refOpacity = useWorkspace((s) => s.settings.refOpacity)
   const project = useActiveProject()
   const keyed = project.animation.keys.length > 0
-  const front = project.images.find((i) => i.view === 'front')
   const focal = useWorkspace((s) => (s.cameraView ? (viewport.renderPose()?.focal ?? 50) : 50))
   const box = useRef<HTMLDivElement>(null)
   const [vp, setVp] = useState({ w: 0, h: 0 })
@@ -360,7 +346,6 @@ export function CameraFrame() {
             className="absolute outline outline-1 outline-white/25"
             style={{ left: r.x, top: r.y, width: r.w, height: r.h, boxShadow: '0 0 0 9999px rgba(0,0,0,0.55)' }}
           >
-            {front && refOpacity > 0 && <img src={front.url} alt="" className="size-full object-contain" style={{ opacity: refOpacity }} />}
             <span className="absolute -top-5 left-0 font-mono text-2xs text-dim">
               Camera · {w}×{h} · {Math.round(focal)}mm{keyed ? ' · keyed' : ' · drag to frame'}
             </span>

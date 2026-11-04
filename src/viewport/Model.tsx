@@ -1,14 +1,16 @@
 import { useGLTF } from '@react-three/drei'
 import { invalidate, type ThreeEvent } from '@react-three/fiber'
 import { Component, memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
-import { Box3, Box3Helper, BufferGeometry, Color, Group, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, Vector3, type BufferAttribute, type Material, type Object3D } from 'three'
+import { Box3, Box3Helper, BufferGeometry, Color, Group, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, Vector3, type BufferAttribute, type Light, type Material, type MeshPhysicalMaterial, type Object3D } from 'three'
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh'
 import { objectTransformAt } from '@/lib/anim'
-import { activeProject, ancestorIds, scaleForSize, subtreeIds, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
+import { activeProject, ancestorIds, subtreeIds, useWorkspace, type SceneObject, type ShadingMode, type Vec3 } from '@/store/workspace'
 import { viewport } from './bridge'
 import { primitiveGroup } from '@/generation/parts/build'
 import { buildFurniture } from '@/furniture/build'
 import { reshade, surfaceFor } from './shading'
+import { lightOf, lumensToIntensity } from '@/furniture/lights'
+import { catalogItemOf } from '@/plan/footprint'
 
 // BVH-accelerated raycasting: picking a 1M-triangle mesh stays sub-millisecond.
 BufferGeometry.prototype.computeBoundsTree = computeBoundsTree
@@ -95,7 +97,7 @@ function ObjectView({ obj, selected, shading, source, clone, fit, recenter }: Pr
   // Normalise once per load: fit into FIT_SIZE units, centre on XZ, rest on the grid.
   // Exact models and primitives keep their metres (metric UVs, real-size textures).
   const exact = !!obj.exact || !!obj.primitive || !!obj.furniture
-  const { root, box } = useMemo(() => {
+  const { root, box, bulb } = useMemo(() => {
     const root = clone ? source.clone(true) : source
     const v = new Vector3()
     const box = new Box3().setFromObject(root)
@@ -111,6 +113,10 @@ function ObjectView({ obj, selected, shading, source, clone, fit, recenter }: Pr
       root.updateMatrixWorld(true)
       box.setFromObject(root)
     }
+    // Lights that came with a GLB are dropped: lamps get one real light of their own (below).
+    const bundled: Object3D[] = []
+    root.traverse((o) => (o as Light).isLight && bundled.push(o))
+    bundled.forEach((l) => l.removeFromParent())
     // Material slots: one per distinct generated material, named after it (Blender-style).
     const slotOf = new Map<string, string>()
     const used = new Set<string>()
@@ -131,8 +137,20 @@ function ObjectView({ obj, selected, shading, source, clone, fit, recenter }: Pr
       m.userData.surface = m.material
       m.userData.geos = { original: m.geometry }
       m.castShadow = m.receiveShadow = true
+      // Glass and glowing bulbs don't block light.
+      const phys = mat as MeshPhysicalMaterial
+      if (phys.transmission > 0 || (mat.transparent && mat.opacity < 0.6)) m.castShadow = false
+      if (isGlowing(mat)) {
+        m.userData.bulb = true
+        m.castShadow = false
+      }
     })
-    return { root, box }
+    // Where a lamp's light sits: on its glowing parts (bulb, filament), in this group's space.
+    const bulbBox = new Box3()
+    root.updateMatrixWorld(true)
+    root.traverse((o) => o.userData.bulb && bulbBox.expandByObject(o))
+    const bulb = bulbBox.isEmpty() ? null : bulbBox.getCenter(new Vector3())
+    return { root, box, bulb }
   }, [source, clone, fit, recenter])
 
   // Build BVHs when the main thread is idle, so loading never hitches.
@@ -180,11 +198,6 @@ function ObjectView({ obj, selected, shading, source, clone, fit, recenter }: Pr
     })
     const st = useWorkspace.getState()
     st.updateObject(obj.id, { stats: { vertices, triangles: Math.round(triangles), meshes, size, surfaces: [...surfaces].map(([key, color]) => ({ key, color })) } })
-    // Spec dimensions requested at generation time: apply once, now that the real bounds are known.
-    const current = st.projects.flatMap((p) => p.objects).find((o) => o.id === obj.id)
-    if (current?.fitSize) {
-      st.updateObject(obj.id, { fitSize: null, transform: { ...current.transform, scale: scaleForSize(size, current.fitSize, current.transform.scale) } })
-    }
   }, [root, box, obj.id])
 
   // Surface per slot = generated material, or the user's override (per surface, else whole-object).
@@ -208,6 +221,40 @@ function ObjectView({ obj, selected, shading, source, clone, fit, recenter }: Pr
     invalidate()
     return () => built.forEach((s) => s.userData.override && s.dispose())
   }, [root, shading, whole, surfaceOverrides, exact])
+
+  // Lamps: a real light on the bulb, in the colour and brightness you set; the bulb glows to match.
+  const light = lightOf(obj)
+  const shadows = useWorkspace((s) => s.shading === 'rendered' && s.settings.engine === 'raster')
+  const lightPos = useMemo(() => {
+    if (!light) return null
+    if (bulb) return bulb
+    const at = catalogItemOf(obj)?.light?.at ?? [0, 0.8, 0]
+    const size = box.getSize(new Vector3())
+    return new Vector3(box.min.x + size.x * (0.5 + at[0]), box.min.y + size.y * at[1], box.min.z + size.z * (0.5 + at[2]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!light, bulb, box])
+  const lightColor = light?.color
+  const lightOn = !!light?.on
+  useLayoutEffect(() => {
+    if (!lightColor || shading === 'wireframe' || shading === 'solid') return
+    const made: Material[] = []
+    root.traverse((o) => {
+      const m = o as Mesh
+      if (!m.isMesh || !m.userData.bulb) return
+      const base = (Array.isArray(m.material) ? m.material[0] : m.material) as MeshStandardMaterial
+      if (!base.isMeshStandardMaterial) return
+      const glow = base.clone()
+      glow.emissive.set(lightColor)
+      glow.emissiveIntensity = lightOn ? Math.max(4, base.emissiveIntensity) : 0
+      if (!lightOn) glow.color.multiplyScalar(0.8)
+      // The path tracer reads this: the bulb glows but doesn't shadow its own light.
+      ;(glow as unknown as { castShadow: boolean }).castShadow = false
+      made.push(glow)
+      m.material = glow
+    })
+    invalidate()
+    return () => made.forEach((x) => x.dispose())
+  }, [root, lightColor, lightOn, shading, whole, surfaceOverrides])
 
   // Shade Smooth / Auto Smooth: normals rebuilt in a worker, cached per mode.
   const shade = obj.shade
@@ -271,9 +318,31 @@ function ObjectView({ obj, selected, shading, source, clone, fit, recenter }: Pr
       onDoubleClick={(e) => pickExact(e, obj.id)}
     >
       <primitive object={root} />
+      {light && lightPos && (
+        <pointLight
+          position={lightPos}
+          color={light.color}
+          intensity={light.on ? lumensToIntensity(light.lumens) : 0}
+          visible={light.on}
+          decay={2}
+          distance={0}
+          castShadow={shadows && light.on}
+          shadow-mapSize={[512, 512]}
+          shadow-bias={-0.002}
+          shadow-normalBias={0.02}
+          shadow-camera-near={0.05}
+        />
+      )}
       <primitive object={helper} visible={selected} />
     </group>
   )
+}
+
+/** A material that gives off light (a bulb, a filament). */
+function isGlowing(mat: Material) {
+  const m = mat as MeshStandardMaterial
+  if (!m.emissive) return false
+  return m.emissiveIntensity > 0 && (m.emissive.r + m.emissive.g + m.emissive.b > 0.3 || (!!m.emissiveMap && m.emissive.r + m.emissive.g + m.emissive.b > 0))
 }
 
 /**
