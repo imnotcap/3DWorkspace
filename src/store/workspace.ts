@@ -161,6 +161,8 @@ export interface Project {
   useTour: boolean
   /** An imported drawing shown under the plan (plan coordinates, metres), to trace or check against. */
   underlay?: Underlay | null
+  /** Unit prices edited in the bill of materials (by row key), DKK. */
+  prices?: Record<string, number>
 }
 
 export interface Underlay {
@@ -283,6 +285,8 @@ interface WorkspaceState {
   closeProject: (id: string) => void
   setActiveProject: (id: string) => void
   renameProject: (id: string, name: string) => void
+  /** Set (or with null, reset) a unit price in the bill of materials. */
+  setPrice: (key: string, price: number | null) => void
   replaceProjects: (projects: Project[], activeId: string) => void
   // objects
   addObject: (obj: { name: string; blob?: Blob; modelFile?: string; primitive?: Primitive; furniture?: FurnitureSpec; surfaces?: Record<string, MaterialOverride>; light?: LightSettings; levelId?: string; source: string; exact?: boolean; spec?: unknown; transform?: Transform; material?: MaterialOverride | null }, projectId?: string) => string
@@ -489,6 +493,15 @@ export const useWorkspace = create<WorkspaceState>()(
           }
         }),
       setActiveProject: (id) => set({ activeProjectId: id, selectedId: null, planSel: null }),
+      setPrice: (key, price) =>
+        set((s) =>
+          patchActive(s, (p) => {
+            const prices = { ...p.prices }
+            if (price === null) delete prices[key]
+            else prices[key] = price
+            return { ...p, prices }
+          }),
+        ),
       renameProject: (id, name) => set((s) => ({ projects: s.projects.map((p) => (p.id === id ? { ...p, name } : p)) })),
       // Saved projects are brought in line too: anything that was inside a wall comes out of it.
       replaceProjects: (projects, activeProjectId) => set({ projects: projects.map((p) => ({ ...p, objects: p.objects.map((o) => clear(p, o)) })), activeProjectId, selectedId: null, past: [], future: [] }),
