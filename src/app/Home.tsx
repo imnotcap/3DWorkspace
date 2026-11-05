@@ -1,10 +1,16 @@
-import { Box, LayoutTemplate, Plus, Trash2 } from 'lucide-react'
-import { useMemo, useState, createElement, type ReactNode } from 'react'
+import { Box, Check, FileUp, LayoutTemplate, Plus, Trash2 } from 'lucide-react'
+import { lazy, Suspense, useMemo, useState, createElement, type ReactNode } from 'react'
+import { cn } from '@/lib/cn'
 import { DARK_THEME, drawPlan, type SvgNode } from '@/plan/draw'
 import { analyse } from '@/plan/geometry'
 import { TEMPLATES } from '@/plan/templates'
 import { useWorkspace, type Project } from '@/store/workspace'
 import { IconButton } from '@/ui/primitives'
+
+const ImportDialog = lazy(() => import('@/panels/ImportDialog').then((m) => ({ default: m.ImportDialog })))
+
+/** What you get, free, with nothing to install or sign up for. */
+const FREE = ['Unlimited 4K renders and walkthrough videos', 'No watermark, no account', 'Materials list, cost estimate and BR18 checks', 'Runs in your browser; your plans stay on this device']
 
 const reactProps = (a: SvgNode['attrs']) => Object.fromEntries(Object.entries(a).filter(([k]) => !k.startsWith('data-')).map(([k, v]) => [k.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()), v]))
 const render = (n: SvgNode, key: number | string): ReactNode => createElement(n.tag, { key, ...reactProps(n.attrs) }, n.text ?? n.children?.map((c, i) => render(c, i)))
@@ -42,6 +48,9 @@ export function Home() {
   const projects = useWorkspace((s) => s.projects)
   const { openProject, addProject, closeProject, renameProject, loadTemplate } = useWorkspace.getState()
   const [editing, setEditing] = useState<string | null>(null)
+  /** The import dialog: open (true), or open on a dropped drawing. */
+  const [importing, setImporting] = useState<File | boolean>(false)
+  const [over, setOver] = useState(false)
 
   const blank = () => {
     addProject()
@@ -72,8 +81,53 @@ export function Home() {
           </div>
         </header>
 
+        <section className="mb-10 grid gap-3 lg:grid-cols-[1.6fr_1fr]">
+          <button
+            type="button"
+            onClick={() => setImporting(true)}
+            onDragEnter={(e) => (e.preventDefault(), setOver(true))}
+            onDragOver={(e) => e.preventDefault()}
+            onDragLeave={(e) => e.currentTarget === e.target && setOver(false)}
+            onDrop={(e) => {
+              e.preventDefault()
+              setOver(false)
+              const f = [...e.dataTransfer.files].find((x) => /^image\/|pdf$/.test(x.type) || /\.pdf$/i.test(x.name))
+              if (f) setImporting(f)
+            }}
+            className={cn(
+              'group flex min-h-40 items-center gap-5 rounded-2xl border border-dashed p-6 text-left transition-colors',
+              over ? 'border-accent bg-accent/10' : 'border-line-strong bg-panel/60 hover:border-accent',
+            )}
+          >
+            <span className="grid size-14 shrink-0 place-items-center rounded-xl bg-accent/15 text-accent transition-transform duration-200 group-hover:scale-105">
+              <FileUp className="size-6" />
+            </span>
+            <span>
+              <span className="block text-lg font-medium text-fg">Import your floor plan</span>
+              <span className="mt-1 block max-w-md text-xs leading-relaxed text-dim">
+                Drop a PDF or a picture of the drawing from the estate agent or architect. Walls, doors, windows, wardrobes, room names and m² are read, and every room comes out at its printed size.
+              </span>
+              <span className="mt-3 inline-flex h-7 items-center rounded-md bg-fg px-3 text-xs font-medium text-app">Choose a file</span>
+            </span>
+          </button>
+          <div className="flex flex-col justify-center gap-2 rounded-2xl border border-line-strong bg-panel/40 p-5">
+            <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Free, all of it</span>
+            {FREE.map((f) => (
+              <span key={f} className="flex items-start gap-2 text-xs text-dim">
+                <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-400" />
+                {f}
+              </span>
+            ))}
+          </div>
+        </section>
+        {importing && (
+          <Suspense fallback={null}>
+            <ImportDialog file={importing instanceof File ? importing : undefined} onClose={() => setImporting(false)} />
+          </Suspense>
+        )}
+
         <section className="mb-10">
-          <h2 className="mb-3 text-2xs font-medium uppercase tracking-[0.08em] text-faint">Start something new</h2>
+          <h2 className="mb-3 text-2xs font-medium uppercase tracking-[0.08em] text-faint">Or start from</h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <button type="button" onClick={blank} className="flex h-28 flex-col items-start justify-between rounded-xl border border-dashed border-line-strong bg-panel/40 p-4 text-left transition-colors hover:border-accent">
               <Plus className="size-4 text-dim" />

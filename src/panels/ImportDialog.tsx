@@ -1,5 +1,5 @@
 import { Check, FileUp, TriangleAlert, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { analyseDrawing, planAt, rasterOf, readDrawing, type ImportAnalysis, type PxWall } from '@/plan/importPlan'
 import { ocrLines } from '@/plan/importText'
@@ -35,7 +35,7 @@ function pxWidth(walls: PxWall[]) {
  * room names and m² are read, and the scale is set from those areas so every room comes out at
  * the size printed on the drawing. It becomes a new project, without furniture.
  */
-export function ImportDialog({ onClose }: { onClose: () => void }) {
+export function ImportDialog({ onClose, file }: { onClose: () => void; file?: File }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [src, setSrc] = useState<{ file: File; canvas: HTMLCanvasElement; url: string; an: ImportAnalysis } | null>(null)
@@ -49,35 +49,42 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
   const k = width && wPx ? width / wPx : auto
   const plan = useMemo(() => (src ? (k === auto ? base : planAt(src.an.ctx, k)) : null), [src, k, auto, base])
 
+  const read = async (file: File) => {
+    setBusy('Reading the drawing…')
+    setError(null)
+    try {
+      const d = await readDrawing(file)
+      const an = await analyseDrawing(rasterOf(d.canvas), {
+        text: d.text,
+        ocr: (ink, w, h) => {
+          setBusy('Reading room names and m²…')
+          return ocrLines(ink, w, h, (p) => setBusy(`Reading room names and m²… ${Math.round(p * 100)} %`))
+        },
+      })
+      const blob = await new Promise<Blob>((r) => d.canvas.toBlob((b) => r(b!), 'image/png'))
+      setSrc({ file, canvas: d.canvas, url: URL.createObjectURL(blob), an })
+      setWidth(null)
+    } catch (e) {
+      setError((e as Error).message || 'Could not read that file.')
+    } finally {
+      setBusy(null)
+    }
+  }
   const pick = () => {
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = 'image/*,.pdf,application/pdf'
-    input.onchange = async () => {
-      const file = input.files?.[0]
-      if (!file) return
-      setBusy('Reading the drawing…')
-      setError(null)
-      try {
-        const d = await readDrawing(file)
-        const an = await analyseDrawing(rasterOf(d.canvas), {
-          text: d.text,
-          ocr: (ink, w, h) => {
-            setBusy('Reading room names and m²…')
-            return ocrLines(ink, w, h, (p) => setBusy(`Reading room names and m²… ${Math.round(p * 100)} %`))
-          },
-        })
-        const blob = await new Promise<Blob>((r) => d.canvas.toBlob((b) => r(b!), 'image/png'))
-        setSrc({ file, canvas: d.canvas, url: URL.createObjectURL(blob), an })
-        setWidth(null)
-      } catch (e) {
-        setError((e as Error).message || 'Could not read that file.')
-      } finally {
-        setBusy(null)
-      }
-    }
+    input.onchange = () => input.files?.[0] && void read(input.files[0])
     input.click()
   }
+  // A drawing dropped on the home screen opens straight into the check.
+  const started = useRef(false)
+  useEffect(() => {
+    if (file && !started.current) {
+      started.current = true
+      void read(file)
+    }
+  }, [file]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const create = async () => {
     if (!src || !plan) return
