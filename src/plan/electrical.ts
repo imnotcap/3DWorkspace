@@ -23,7 +23,7 @@ interface Spot {
 }
 
 /** The faces of the room: straight wall sides that look into it, with their run along the wall. */
-function roomFaces(geom: PlanGeom, face: number) {
+export function roomFaces(geom: PlanGeom, face: number) {
   const out: { g: WallGeom; side: 'left' | 'right'; u0: number; u1: number }[] = []
   for (const g of geom.walls.values()) {
     if (g.wall.parentId) continue

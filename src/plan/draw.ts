@@ -181,7 +181,9 @@ export function drawPlan(i: DrawInput): SvgNode[] {
   })
 
   // Furniture (drawn under walls, so pieces against a wall read cleanly).
-  for (const o of i.objects) {
+  // Flat pieces (rugs, paving, decking) first: everything else stands on them.
+  const flat = (o: SceneObject) => ['rug', 'paving', 'decking'].includes(o.furniture?.item ?? '')
+  for (const o of [...i.objects].sort((a, b) => Number(flat(b)) - Number(flat(a)))) {
     const fp = footprint(o)
     const sel = i.selectedObject === o.id || !!i.selectedObjects?.includes(o.id)
     const item = itemById(o.furniture?.item)

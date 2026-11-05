@@ -278,6 +278,7 @@ function RoomInspector({ levelId, at }: { levelId: string; at: Vec2 }) {
         <FinishPicker value={info?.walls ?? DEFAULT_WALL_FINISH} materials={WALL_MATERIALS} onChange={(walls) => update('Paint walls', true, { walls })} />
       </div>
       <TrimSection trim={info?.trim ?? DEFAULT_TRIM} onChange={(trim, first) => update('Wall panels', first, { trim })} />
+      <FurnishSection levelId={levelId} face={face.index} info={info} />
       <ElectricalSection levelId={levelId} face={face.index} polygon={face.polygon} info={info} />
       <div className="space-y-1.5 border-t border-line pt-2">
         <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Ceiling</span>
@@ -379,6 +380,32 @@ function BeamsSection({ beams, onChange }: { beams?: CeilingBeams; onChange: (b:
           </Field>
         </>
       )}
+    </div>
+  )
+}
+
+/** Furnish the room in one go, from its name. */
+function FurnishSection({ levelId, face, info }: { levelId: string; face: number; info?: RoomInfo }) {
+  const project = useActiveProject()
+  const [note, setNote] = useState<string | null>(null)
+  const furnish = async () => {
+    const { furnishRoom } = await import('@/plan/furnish')
+    const level = project.levels.find((l) => l.id === levelId)!
+    const geom = analyse(project.walls.filter((w) => w.levelId === levelId))
+    const first = project.levels[0].id
+    const objects = project.objects.filter((o) => (o.levelId ?? first) === levelId)
+    const r = furnishRoom({ geom, face, info, level, openings: project.openings, objects })
+    if (!r.objects.length) return setNote(r.kind === 'hall' ? 'Name the room (Bedroom, Living room, Kitchen, Bathroom, Office…) to furnish it.' : 'No free space left for more furniture here.')
+    setNote(`${r.objects.length} pieces added for a ${r.kind === 'kids' ? 'room' : r.kind}. Undo with Ctrl+Z.`)
+    useWorkspace.getState().insertObjects('Furnish room', r.objects)
+  }
+  return (
+    <div className="space-y-1.5 border-t border-line pt-2">
+      <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Furnish</span>
+      <Button className="w-full" onClick={() => void furnish()}>
+        Furnish this room
+      </Button>
+      <p className="text-2xs leading-snug text-faint">{note ?? 'Furniture that fits the room’s name and size, against free walls and clear of the doors; companions (nightstands, chairs, coffee table, rug) placed where they belong.'}</p>
     </div>
   )
 }

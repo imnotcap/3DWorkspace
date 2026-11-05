@@ -14,3 +14,12 @@ export async function resolve(specifier, context, next) {
   }
   return next(spec, context)
 }
+
+/** Vite's `import.meta.env` for the app's own modules. */
+export async function load(url, context, next) {
+  const r = await next(url, context)
+  if (url.startsWith('file:') && url.includes('/src/') && r.source && String(r.source).includes('import.meta.env')) {
+    return { ...r, source: `import.meta.env ??= { BASE_URL: '/', DEV: false, PROD: true, MODE: 'test' };\n${r.source}` }
+  }
+  return r
+}
