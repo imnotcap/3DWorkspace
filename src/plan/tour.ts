@@ -1,6 +1,6 @@
 // Walkthrough tours: a smooth path through the rooms, and the camera pose at any frame.
 import type { CameraPose, Project } from '@/store/workspace'
-import { analyse, add, dist, distanceToPolygon, mul, norm, pieceAt, pointInPolygon, sub, type Face } from './geometry'
+import { analyse, add, dist, distanceToPolygon, mul, norm, pieceAt, pointInPolygon, sub, wallFrame, type Face } from './geometry'
 import { levelElevations } from './levels'
 import { OPENING_DEFAULTS, type TourPoint, type Vec2 } from './types'
 
@@ -251,6 +251,118 @@ export function tourFrames(project: Pick<Project, 'tour' | 'levels'>, fps: numbe
   return Math.max(2, Math.ceil(path.duration * fps) + 1)
 }
 
+/** The sample pair around time t and how far between them. */
+function sampleAt(path: TourPath, t: number) {
+  const S = path.samples
+  let lo = 0
+  let hi = S.length - 1
+  while (hi - lo > 1) {
+    const m = (lo + hi) >> 1
+    if (S[m].t <= t) lo = m
+    else hi = m
+  }
+  return { lo, hi, k: Math.max(0, Math.min(1, (t - S[lo].t) / (S[hi].t - S[lo].t || 1))) }
+}
+
+/** How far along the walk (m) the camera is at `frame`. */
+export function tourDistance(project: Pick<Project, 'tour' | 'levels'>, frame: number, fps: number, path = tourPath(project)) {
+  const S = path.samples
+  if (S.length < 2) return 0
+  const { lo, hi, k } = sampleAt(path, Math.max(0, Math.min(path.duration, frame / fps)))
+  return S[lo].s + (S[hi].s - S[lo].s) * k
+}
+
+/** A pass through a door: `s` at the doorway, and the stretch [s0, s1] where the camera is within reach of its leaves. */
+export interface DoorPass {
+  id: string
+  s: number
+  s0: number
+  s1: number
+}
+
+const doorCache = new WeakMap<TourPath, { openings: unknown; walls: unknown; list: DoorPass[] }>()
+
+/**
+ * Where the walk goes through a door: every pass (in and out of a room are two), with the stretch
+ * of the walk where the camera is close enough for a swinging leaf to touch it. Passes close
+ * together are one (the door stays open between them).
+ */
+export function tourDoorCrossings(project: Pick<Project, 'tour' | 'levels' | 'walls' | 'openings'>, path = tourPath(project)): DoorPass[] {
+  const hit = doorCache.get(path)
+  if (hit && hit.openings === project.openings && hit.walls === project.walls) return hit.list
+  const elev = levelElevations(project.levels)
+  const list: DoorPass[] = []
+  const step = 0.04
+  for (const o of project.openings) {
+    if (!['door', 'double-door', 'sliding-door', 'french-window'].includes(o.kind)) continue
+    const w = project.walls.find((x) => x.id === o.wallId)
+    if (!w) continue
+    const c = wallFrame(w, o.t).p
+    const y = (elev.get(w.levelId) ?? 0) + project.tour.eyeHeight
+    // The leaves: their hinges and widths (a sliding door just needs its doorway).
+    const leaf = o.kind === 'door' ? o.width : o.width / 2
+    const hinges = o.kind === 'sliding-door' ? [] : o.kind === 'door' ? [wallFrame(w, o.hinge === 'a' ? o.t - o.width / 2 : o.t + o.width / 2).p] : [wallFrame(w, o.t - o.width / 2).p, wallFrame(w, o.t + o.width / 2).p]
+    const through = Math.max(0.6, o.width / 2 + 0.25)
+    const n = Math.floor(path.length / step) + 1
+    const near: boolean[] = []
+    const passD: number[] = []
+    for (let i = 0; i < n; i++) {
+      const p = at(path, i * step)
+      if (Math.abs(p[1] - y) > 0.6) {
+        near.push(false)
+        passD.push(Infinity)
+        continue
+      }
+      const d = Math.hypot(p[0] - c[0], p[2] - c[1])
+      passD.push(d)
+      near.push(d < through || hinges.some((h) => Math.hypot(p[0] - h[0], p[2] - h[1]) < leaf + 0.3))
+    }
+    // Each run of "near" that actually goes through the doorway is a pass.
+    const mine: DoorPass[] = []
+    for (let i = 0; i < n; ) {
+      if (!near[i]) {
+        i++
+        continue
+      }
+      let j = i
+      let best = i
+      while (j < n && near[j]) {
+        if (passD[j] < passD[best]) best = j
+        j++
+      }
+      if (passD[best] < through) mine.push({ id: o.id, s: best * step, s0: i * step, s1: (j - 1) * step })
+      i = j
+    }
+    for (const m of mine) {
+      const last = list.at(-1)
+      if (last && last.id === m.id && m.s0 - last.s1 < 2.5) last.s1 = m.s1
+      else list.push(m)
+    }
+  }
+  doorCache.set(path, { openings: project.openings, walls: project.walls, list })
+  return list
+}
+
+const smooth = (a: number, b: number, x: number) => {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)))
+  return t * t * (3 - 2 * t)
+}
+
+/**
+ * How open each door is with the camera `s` metres along the walk: shut until the camera comes
+ * near, then swinging open over the 1.2 m before it is within reach of a leaf, fully open all the
+ * time it is (so a leaf never moves through the camera), closing again once it has moved on.
+ * Doors the walk doesn't go through stay shut.
+ */
+export function tourDoorsAt(crossings: DoorPass[], s: number): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const c of crossings) {
+    const v = Math.min(smooth(c.s0 - 1.35, c.s0 - 0.15, s), 1 - smooth(c.s1 + 0.15, c.s1 + 1.35, s))
+    out.set(c.id, Math.max(out.get(c.id) ?? 0, v))
+  }
+  return out
+}
+
 /** Camera at frame `frame` of the walk: eye height, looking ahead along the path. */
 export function tourPose(project: Pick<Project, 'tour' | 'levels'>, frame: number, fps: number, path = tourPath(project)): CameraPose {
   const S = path.samples
@@ -262,15 +374,7 @@ export function tourPose(project: Pick<Project, 'tour' | 'levels'>, frame: numbe
     fx = 0
     fz = -1
   } else {
-    const t = Math.max(0, Math.min(path.duration, frame / fps))
-    let lo = 0
-    let hi = S.length - 1
-    while (hi - lo > 1) {
-      const m = (lo + hi) >> 1
-      if (S[m].t <= t) lo = m
-      else hi = m
-    }
-    const k = Math.max(0, Math.min(1, (t - S[lo].t) / (S[hi].t - S[lo].t || 1)))
+    const { lo, hi, k } = sampleAt(path, Math.max(0, Math.min(path.duration, frame / fps)))
     pos = at(path, S[lo].s + (S[hi].s - S[lo].s) * k)
     // Turn the view between the two samples (by angle, so it never cuts across).
     const a0 = Math.atan2(S[lo].hz, S[lo].hx)

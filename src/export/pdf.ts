@@ -12,6 +12,7 @@ import { activeProject, useWorkspace, type CameraPose, type Project, type SceneO
 import { download, viewport } from '@/viewport/bridge'
 import { framePose, visibleBox } from '@/viewport/camera'
 import { PAINT_COLORS, presetById } from '@/viewport/materialPresets'
+import { billOfMaterials } from '@/plan/quantities'
 
 /**
  * The house as a presentation document: cover, floor plans (vector), 3D views of every floor,
@@ -519,6 +520,44 @@ export async function exportPdf() {
       }),
       () => newPage('Furniture (continued)'),
     )
+
+    // ── Materials and estimate ──
+    const bom = billOfMaterials(project)
+    if (bom.length) {
+      y = newPage('Materials and estimate')
+      const prices = project.prices ?? {}
+      const kr = (n: number) => `${Math.round(n).toLocaleString('da-DK')} kr`
+      const total = bom.reduce((s, r) => s + (prices[r.key] ?? r.price) * r.qty, 0)
+      y = table(
+        doc,
+        y,
+        [
+          { label: 'Group', w: 32 },
+          { label: 'Item', w: 62 },
+          { label: 'Based on', w: 95 },
+          { label: 'Qty', w: 22, align: 'right' },
+          { label: 'Unit price', w: 24, align: 'right' },
+          { label: 'Total', w: 30, align: 'right' },
+        ],
+        bom.map((r) => {
+          const price = prices[r.key] ?? r.price
+          return [r.group, r.name, r.detail, `${Number.isInteger(r.qty) ? r.qty : r.qty.toFixed(1)} ${r.unit}`, kr(price), kr(price * r.qty)]
+        }),
+        () => newPage('Materials and estimate (continued)'),
+      )
+      doc.setDrawColor(...INK)
+      doc.setLineWidth(0.3)
+      doc.line(M, y + 1, PW - M, y + 1)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(10)
+      doc.setTextColor(...INK)
+      doc.text('Estimate', M + 1, y + 7)
+      doc.text(kr(total), PW - M - 1, y + 7, { align: 'right' })
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(7)
+      doc.setTextColor(...GREY)
+      doc.text('Guide prices in DKK incl. VAT, materials only (no labour). Floors and trim include waste; paint is 2 coats.', M + 1, y + 13)
+    }
 
     // ── Credits ──
     const used = new Set(project.objects.map((o) => o.modelFile).filter(Boolean))

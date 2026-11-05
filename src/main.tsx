@@ -9,7 +9,10 @@ import '@fontsource/jetbrains-mono/400.css'
 import '@fontsource/jetbrains-mono/500.css'
 import './index.css'
 
-void initPersistence()
+// A shared plan in the address opens once your own projects have loaded (so it can't replace them).
+const openShared = () => location.hash.startsWith('#plan=') && void import('./lib/share').then((m) => m.openSharedLink())
+void initPersistence().then(openShared)
+window.addEventListener('hashchange', openShared)
 
 // Dev builds only: the store on window, for debugging and browser tests.
 if (import.meta.env.DEV) {

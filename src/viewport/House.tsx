@@ -7,11 +7,15 @@ import { footprint } from '@/plan/footprint'
 import type { Level } from '@/plan/types'
 import { useWorkspace, type Project } from '@/store/workspace'
 import { viewport } from './bridge'
+import { portalLights, setPortals } from './interior'
 
 const HIGHLIGHT = new Color('#4c8dff')
 
-/** One floor of the house, built from the plan (walls, openings, floors, ceilings). */
-export function HouseLevel({ project, level, index, ceilings }: { project: Project; level: Level; index: number; ceilings: boolean }) {
+/**
+ * One floor of the house, built from the plan (walls, openings, floors, ceilings). `daylight`: the
+ * house is closed (ceilings on, real-time rendered look), so daylight comes in through the windows.
+ */
+export function HouseLevel({ project, level, index, ceilings, daylight }: { project: Project; level: Level; index: number; ceilings: boolean; daylight: boolean }) {
   const walls = useMemo(() => project.walls.filter((w) => w.levelId === level.id), [project.walls, level.id])
   const wallIds = useMemo(() => new Set(walls.map((w) => w.id)), [walls])
   const openings = useMemo(() => project.openings.filter((o) => wallIds.has(o.wallId)), [project.openings, wallIds])
@@ -71,6 +75,16 @@ export function HouseLevel({ project, level, index, ceilings }: { project: Proje
     built.group.traverse((o) => o.userData.ceiling && (o.visible = ceilings))
     invalidate()
   }, [built, ceilings])
+
+  // Daylight through the windows (area lights in the openings), for the time of day.
+  const ambience = useWorkspace((s) => s.settings.ambience)
+  useEffect(() => {
+    const lights = portalLights(built.portals, ambience)
+    lights.forEach((l) => built.group.add(l))
+    setPortals(built.group, daylight)
+    invalidate()
+    return () => lights.forEach((l) => (built.group.remove(l), l.dispose()))
+  }, [built, ambience, daylight])
 
   // Selected wall / room / opening: a box around it.
   const sel = useWorkspace((s) => s.planSel)

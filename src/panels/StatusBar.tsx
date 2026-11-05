@@ -11,6 +11,7 @@ export function StatusBar() {
   const selectedId = useWorkspace((s) => s.selectedId)
   const project = useActiveProject()
   const selected = project.objects.find((o) => o.id === selectedId)
+  const count = useWorkspace((s) => s.selection.length)
   const engine = useWorkspace((s) => (s.settings.engine === 'pathtrace' ? 'Path tracing' : 'Real-time'))
 
   return (
@@ -19,8 +20,10 @@ export function StatusBar() {
       <Hint k="⇧ Drag" label="Pan" />
       <Hint k="Wheel" label="Zoom" />
       <Hint k="F" label="Frame" />
+      <Hint k="⇧ Click" label="Add to selection" />
+      <Hint k="Ctrl C · V" label="Copy · paste" />
       <div className="flex-1" />
-      {selected && <span className="text-dim">{selected.name}</span>}
+      {count > 1 ? <span className="text-dim">{count} selected</span> : selected && <span className="text-dim">{selected.name}</span>}
       <span className="font-mono">Render · {engine}</span>
     </div>
   )

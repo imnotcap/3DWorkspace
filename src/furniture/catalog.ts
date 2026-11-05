@@ -1,8 +1,8 @@
 // Furniture catalog (three.js-free, so panels can list it without loading 3D code).
 import type { Vec3 } from '@/store/workspace'
 
-export type Category = 'Living' | 'Dining' | 'Kitchen' | 'Bedroom' | 'Bathroom' | 'Office' | 'Lighting' | 'Decor' | 'Electrical' | 'Structure'
-export const CATEGORIES: Category[] = ['Living', 'Dining', 'Kitchen', 'Bedroom', 'Bathroom', 'Office', 'Lighting', 'Decor', 'Electrical', 'Structure']
+export type Category = 'Living' | 'Dining' | 'Kitchen' | 'Bedroom' | 'Bathroom' | 'Office' | 'Lighting' | 'Decor' | 'Electrical' | 'Outdoor' | 'Structure'
+export const CATEGORIES: Category[] = ['Living', 'Dining', 'Kitchen', 'Bedroom', 'Bathroom', 'Office', 'Lighting', 'Decor', 'Electrical', 'Outdoor', 'Structure']
 
 /** Default finish per material slot of a piece: a library preset and/or a colour. */
 export type SlotDefaults = Record<string, { color: string; preset?: string }>
@@ -24,6 +24,10 @@ export interface CatalogItem {
   model?: { file: string; credit: string; license: string }
   /** Short note in the catalog. */
   note?: string
+  /** A picture of it (model library), in public/models/. */
+  thumb?: string
+  /** What kind of piece a library model is (a chair, a table…), for smart placement and the plan drawing. */
+  role?: string
   /**
    * Lamps: the bulb's default output. The light sits on the piece's glowing (emissive) parts, or at
    * `at` (fractions of its size: x and z from the centre, y from the bottom) when it has none.
@@ -117,8 +121,73 @@ export const CATALOG: CatalogItem[] = [
   { id: 'data-socket', name: 'TV / data socket', category: 'Electrical', size: [0.085, 0.085, 0.012], kind: 'parametric', mount: 'wall', y: 0.2575, slots: { Plate: W('#f6f5f2', 'matte-white') } },
   { id: 'radiator', name: 'Panel radiator', category: 'Electrical', size: [1.0, 0.6, 0.1], kind: 'parametric', mount: 'wall', y: 0.15, slots: { Body: W('#f4f3f0', 'matte-white'), Valve: CHROME }, note: 'Wall panels are built around it' },
 
+  // Outdoor: garden and terrace (resize them to fit).
+  { id: 'tree', name: 'Tree', category: 'Outdoor', size: [3.2, 5.5, 3.2], kind: 'parametric', mount: 'floor', slots: { Leaves: W('#4f8a35'), Trunk: W('#6b4f3a') } },
+  { id: 'bush', name: 'Bush', category: 'Outdoor', size: [1.1, 0.9, 1.0], kind: 'parametric', mount: 'floor', slots: { Leaves: W('#5a9a3c') } },
+  { id: 'hedge', name: 'Hedge', category: 'Outdoor', size: [3.0, 1.4, 0.6], kind: 'parametric', mount: 'floor', slots: { Leaves: W('#456f2e') } },
+  { id: 'paving', name: 'Terrace paving', category: 'Outdoor', size: [4.0, 0.04, 3.0], kind: 'parametric', mount: 'floor', slots: { Surface: W('#a9a49b', 'concrete') }, note: 'Stretch it to the terrace' },
+  { id: 'decking', name: 'Wood decking', category: 'Outdoor', size: [4.0, 0.06, 3.0], kind: 'parametric', mount: 'floor', slots: { Surface: W('#a4825f', 'oak') } },
+
   // Structure
   { id: 'stairs', name: 'Straight stairs', category: 'Structure', size: [1.0, 2.85, 3.6], kind: 'parametric', mount: 'floor', slots: { Treads: OAK, Structure: WHITE, Rail: BLACK_METAL }, note: 'Cuts the floor above' },
 ]
 
 export const itemById = (id?: string) => CATALOG.find((c) => c.id === id)
+
+/** What a piece is, by its id (catalog pieces) or its name (library models): a chair, a sofa, a bed… */
+export function roleOf(item: Pick<CatalogItem, 'id' | 'name'> & { role?: string }): string {
+  if (item.role) return item.role
+  if (!item.id.startsWith('ph-')) return item.id
+  const n = item.name.toLowerCase()
+  const rules: [RegExp, string][] = [
+    [/bar ?stool|stool/, 'bar-stool'],
+    [/office chair|desk chair/, 'office-chair'],
+    [/armchair|lounge chair|wing ?chair/, 'armchair'],
+    [/chair/, 'dining-chair'],
+    [/sofa|couch|settee/, 'sofa'],
+    [/coffee table/, 'coffee-table'],
+    [/side table|end table/, 'side-table'],
+    [/round table/, 'round-table'],
+    [/desk/, 'desk'],
+    [/table/, 'dining-table'],
+    [/nightstand|bedside/, 'nightstand'],
+    [/bed/, 'bed-double'],
+    [/wardrobe|closet/, 'wardrobe'],
+    [/shelf|shelves|bookcase/, 'bookshelf'],
+    [/cabinet|dresser|drawer|chest/, 'dresser'],
+    [/plant|fern|tree|cactus|flower/, 'plant'],
+    [/lamp|light|chandelier/, 'floor-lamp'],
+    [/rug|carpet/, 'rug'],
+  ]
+  return rules.find(([re]) => re.test(n))?.[1] ?? item.id
+}
+
+/** A library model from public/models/library.json (Poly Haven, CC0). */
+interface LibraryEntry {
+  id: string
+  name: string
+  category: Category
+  size: Vec3
+  file: string
+  thumb?: string
+  credit: string
+  license: string
+}
+
+let library: Promise<number> | null = null
+/** Add the model library (downloaded at build time) to the catalog, once. Resolves to how many it added. */
+export function loadLibrary(): Promise<number> {
+  library ??= fetch(`${import.meta.env.BASE_URL}models/library.json`)
+    .then((r) => (r.ok ? (r.json() as Promise<LibraryEntry[]>) : []))
+    .catch(() => [] as LibraryEntry[])
+    .then((list) => {
+      for (const e of list) {
+        if (CATALOG.some((c) => c.id === e.id)) continue
+        const item: CatalogItem = { id: e.id, name: e.name, category: e.category, size: e.size, kind: 'model', mount: 'floor', model: { file: e.file, credit: e.credit, license: e.license }, thumb: e.thumb }
+        item.role = roleOf(item)
+        CATALOG.push(item)
+      }
+      return list.length
+    })
+  return library
+}

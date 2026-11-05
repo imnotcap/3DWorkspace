@@ -355,6 +355,8 @@ function pick(e: ThreeEvent<MouseEvent>, id: string) {
   const s = useWorkspace.getState()
   const objects = activeProject(s).objects
   const chain = [id, ...ancestorIds(objects, id)] // part → … → model
+  // Shift/Ctrl-click: add the whole model to (or take it out of) the selection.
+  if (e.shiftKey || e.ctrlKey || e.metaKey) return s.select(chain.at(-1)!, 'toggle')
   const at = s.selectedId ? chain.indexOf(s.selectedId) : -1
   if (at > 0) return s.select(chain[at - 1])
   if (at === 0) return
@@ -392,7 +394,8 @@ function localBounds(root: Object3D, box = new Box3()) {
 function GroupView({ obj, selectedId, shading, tree }: TreeProps) {
   const group = useRef<Group>(null)
   const kids = tree.get(obj.id) ?? []
-  const selected = obj.id === selectedId
+  const inSelection = useWorkspace((s) => s.selection.length > 1 && s.selection.includes(obj.id))
+  const selected = obj.id === selectedId || inSelection
   const box = useMemo(() => new Box3(), [])
   const helper = useMemo(() => {
     const h = new Box3Helper(box, SELECT_COLOR)
@@ -483,8 +486,10 @@ class ModelBoundary extends Component<{ id: string; children: ReactNode }, { fai
 
 /** Each model suspends on its own, so loading one never blanks the others. */
 export const Model = memo(function Model({ obj, selectedId, shading, tree }: TreeProps) {
+  // Part of a multi-selection: boxed like the primary.
+  const inSelection = useWorkspace((s) => s.selection.length > 1 && s.selection.includes(obj.id))
   if (obj.isGroup) return <GroupView obj={obj} selectedId={selectedId} shading={shading} tree={tree} />
-  const props = { obj, selected: obj.id === selectedId, shading }
+  const props = { obj, selected: obj.id === selectedId || inSelection, shading }
   return (
     <ModelBoundary id={obj.id}>
       <Suspense fallback={null}>{obj.furniture ? <FurnitureModel {...props} /> : obj.primitive ? <PrimitiveModel {...props} /> : obj.url ? <GltfModel {...props} /> : null}</Suspense>

@@ -1,6 +1,6 @@
 import { Search, Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CATALOG, CATEGORIES, type CatalogItem, type Category } from '@/furniture/catalog'
+import { CATALOG, CATEGORIES, loadLibrary, type CatalogItem, type Category } from '@/furniture/catalog'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/store/workspace'
 
@@ -34,6 +34,12 @@ function Footprint({ item }: { item: CatalogItem }) {
 
 /** A rendered picture of the piece (made in the background); its outline until it's ready. */
 function Preview({ item }: { item: CatalogItem }) {
+  // Library models come with their own picture.
+  if (item.thumb) return <img src={`${import.meta.env.BASE_URL}models/${item.thumb}`} alt="" loading="lazy" draggable={false} className="h-20 w-full object-contain transition-transform duration-200 group-hover:scale-105" />
+  return <RenderedPreview item={item} />
+}
+
+function RenderedPreview({ item }: { item: CatalogItem }) {
   const [url, setUrl] = useState<string | null>(null)
   const [seen, setSeen] = useState(false)
   const box = useRef<HTMLSpanElement>(null)
@@ -71,11 +77,15 @@ export function Catalog() {
   const view = useWorkspace((s) => s.view)
   const setView = useWorkspace((s) => s.setView)
   const files = useModelManifest()
+  // The model library (hundreds of CC0 pieces) joins the catalog once it has loaded.
+  const [libraryCount, setLibraryCount] = useState(0)
+  useEffect(() => void loadLibrary().then(setLibraryCount), [])
 
   const items = useMemo(
     () =>
-      CATALOG.filter((i) => (cat === 'All' || i.category === cat) && i.name.toLowerCase().includes(q.trim().toLowerCase()) && (i.kind === 'parametric' || i.model!.file.startsWith('own/') || !files || files.has(i.model!.file))),
-    [cat, q, files],
+      CATALOG.filter((i) => (cat === 'All' || i.category === cat) && i.name.toLowerCase().includes(q.trim().toLowerCase()) && (i.kind === 'parametric' || !!i.thumb || i.model!.file.startsWith('own/') || !files || files.has(i.model!.file))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cat, q, files, libraryCount],
   )
 
   return (

@@ -5,6 +5,7 @@ import {
   CylinderGeometry,
   DoubleSide,
   ExtrudeGeometry,
+  IcosahedronGeometry,
   Float32BufferAttribute,
   Group,
   LatheGeometry,
@@ -740,7 +741,60 @@ function radiator(k: Kit, w: number, h: number, d: number) {
   for (const sx of [-1, 1]) k.box('Valve', 0.03, 0.04, 0.04, sx * (w / 2 - 0.12), h * 0.75, -d / 2 - 0.02, 0.004)
 }
 
+/* ───────── Outdoor ───────── */
+
+/** A cluster of leafy lumps (faceted spheres) filling roughly w × h × d, its bottom at y0. */
+function foliage(k: Kit, w: number, h: number, d: number, y0: number, n: number, seed: number) {
+  const rand = rng(seed)
+  for (let i = 0; i < n; i++) {
+    const r = Math.min(w, d, h) * (0.28 + rand() * 0.14)
+    const x = (rand() - 0.5) * (w - r * 1.6)
+    const z = (rand() - 0.5) * (d - r * 1.6)
+    const y = y0 + r + rand() * Math.max(0, h - r * 2)
+    const g = new IcosahedronGeometry(r, 1)
+    const pos = g.attributes.position
+    // Lumpy: each vertex pushed in or out a little.
+    for (let j = 0; j < pos.count; j++) {
+      const f = 0.86 + rand() * 0.22
+      pos.setXYZ(j, pos.getX(j) * f, pos.getY(j) * f, pos.getZ(j) * f)
+    }
+    g.computeVertexNormals()
+    k.add(g, 'Leaves', x, y, z)
+  }
+}
+
+function tree(k: Kit, w: number, h: number, d: number) {
+  const trunkH = h * 0.42
+  k.cyl('Trunk', 0.08, 0.13, trunkH + 0.4, 0, 0, 0, 12)
+  for (const a of [0.6, 2.4, 4.3]) k.rod('Trunk', 0.04, [0, trunkH * 0.85, 0], [Math.cos(a) * w * 0.18, trunkH + 0.5, Math.sin(a) * d * 0.18], 8)
+  foliage(k, w, h - trunkH, d, trunkH, 9, Math.round(w * 131 + h * 7))
+}
+
+function bush(k: Kit, w: number, h: number, d: number) {
+  foliage(k, w, h, d, 0, Math.max(4, Math.round((w * d) / 0.25)), Math.round(w * 97 + d * 13))
+}
+
+function hedge(k: Kit, w: number, h: number, d: number) {
+  k.box('Leaves', w - 0.1, h - 0.15, d - 0.1, 0, 0, 0, 0.08)
+  foliage(k, w, h, d, 0, Math.max(5, Math.round(w / 0.35)), Math.round(w * 53))
+}
+
+function paving(k: Kit, w: number, h: number, d: number) {
+  k.box('Surface', w, Math.max(0.01, h), d, 0, 0, 0, 0.004)
+}
+
+function decking(k: Kit, w: number, h: number, d: number) {
+  const n = Math.max(1, Math.round(d / 0.145))
+  const bw = d / n
+  for (let i = 0; i < n; i++) k.box('Surface', w, Math.max(0.01, h), bw - 0.006, 0, 0, -d / 2 + bw * (i + 0.5), 0.003)
+}
+
 const BUILDERS: Record<string, Builder> = {
+  tree,
+  bush,
+  hedge,
+  paving,
+  decking,
   socket,
   'double-socket': doubleSocket,
   switch: (k, w, h, d) => lightSwitch(k, w, h, d, 1),

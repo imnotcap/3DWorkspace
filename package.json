@@ -10,10 +10,11 @@
     "typecheck": "tsc -p tsconfig.json",
     "textures": "node scripts/fetch-textures.mjs; node scripts/fetch-wood.mjs",
     "check:secrets": "node scripts/check-secrets.mjs",
-    "test": "node --test tests/*.test.ts",
+    "test": "node --import ./tests/setup.mjs --test tests/*.test.ts",
     "models": "node scripts/fetch-models.mjs",
     "test:import": "node scripts/test-import.mjs",
-    "test:tour": "node scripts/test-tour.mjs"
+    "test:tour": "node scripts/test-tour.mjs",
+    "library": "node scripts/fetch-library.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",

@@ -43,6 +43,8 @@ export const viewport = {
   renderStill: async (): Promise<Blob | null> => null,
   /** Render one shot at its own size, with ceilings/levels as asked (PDF pages). */
   renderShot: async (_pose: CameraPose, _opts: { width: number; height: number; transparent?: boolean; ceilings: boolean; maxLevel: number | null; background?: string; samples?: number }): Promise<Blob | null> => null,
+  /** A 360° panorama from `eye` (world, m), the middle looking along `heading` (plan yaw): an equirectangular JPEG. */
+  renderPanorama: async (_o: { eye: [number, number, number]; heading: number; size: number; width: number; onFace: (done: number, total: number) => void; signal?: AbortSignal }): Promise<Blob | null> => null,
   renderVideo: async (_onFrame: (done: number, total: number) => void, _signal: AbortSignal): Promise<VideoResult | null> => null,
 }
 

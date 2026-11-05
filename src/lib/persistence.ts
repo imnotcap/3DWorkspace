@@ -45,6 +45,7 @@ interface StoredState {
     plan?: PlanData
     activeLevelId?: string
     useTour?: boolean
+    prices?: Record<string, number>
   }[]
 }
 
@@ -90,6 +91,7 @@ async function save() {
       plan: { levels: p.levels, walls: p.walls, openings: p.openings, rooms: p.rooms, tour: p.tour },
       activeLevelId: p.activeLevelId,
       useTour: p.useTour,
+      prices: p.prices,
       objects: p.objects.map((o) => {
         if (o.blob) blobs.push([o.id, o.blob])
         return {
@@ -178,6 +180,7 @@ async function load(): Promise<boolean> {
         rooms: p.plan?.rooms ?? [],
         tour: { ...DEFAULT_TOUR, ...p.plan?.tour },
         useTour: !!p.useTour,
+        prices: p.prices ?? {},
         objects,
         underlay,
         camera: p.camera ?? null,

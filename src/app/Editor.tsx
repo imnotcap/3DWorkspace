@@ -14,6 +14,7 @@ import { PlanEditor } from '@/plan/PlanEditor'
 import { tourFrames } from '@/plan/tour'
 import { activeProject, useWorkspace } from '@/store/workspace'
 import { useHotkeys } from './useHotkeys'
+import { loadLibrary } from '@/furniture/catalog'
 
 // three.js is the heaviest chunk; split it so the shell paints first.
 const Viewport = lazy(() => import('@/viewport/Viewport').then((m) => ({ default: m.Viewport })))
@@ -43,6 +44,8 @@ function useTourLength() {
 /** The editor: plan, 3D view, timeline, sidebar and inspector (loaded after the home screen). */
 export function Editor() {
   useHotkeys()
+  // The model library: catalog entries for library pieces already in the project (names, plan drawing, placement).
+  useEffect(() => void loadLibrary(), [])
   useTourLength()
   const [dragging, setDragging] = useState(false)
   const showTimeline = useWorkspace((s) => s.settings.showTimeline)
