@@ -2,7 +2,7 @@
 // a sofa with seat cushions, chairs round a table, a toilet bowl, the basin in a vanity, plants
 // as leafy clusters… In the piece's own frame (x across its width, y along its depth, the front at
 // +y), in its own colours (its material slots), placed by the caller.
-import type { CatalogItem } from '@/furniture/catalog'
+import { roleOf, type CatalogItem } from '@/furniture/catalog'
 import type { SceneObject } from '@/store/workspace'
 import type { SvgNode } from './draw'
 
@@ -30,7 +30,7 @@ const shade = (hex: string, k: number) => {
 
 /** The details drawn on top of a piece (its outline is drawn by the caller). */
 export function furnitureSymbol(o: SceneObject, item: CatalogItem | undefined, w: number, d: number, st: SymbolStyle): { base: string | null; nodes: N[] } {
-  const id = item?.id ?? ''
+  const id = item ? roleOf(item) : ''
   const L = st.lw
   const line = st.line
   const r = (x: number, y: number, rw: number, rh: number, fill: string, rx = 0, extra: Record<string, string | number> = {}): N => ({ tag: 'rect', attrs: { x: x - rw / 2, y: y - rh / 2, width: Math.max(0.001, rw), height: Math.max(0.001, rh), rx, fill, stroke: line, 'stroke-width': L, ...extra } })

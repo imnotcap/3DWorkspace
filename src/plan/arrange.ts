@@ -2,7 +2,7 @@
 // it would really stand. A chair is pulled up to the nearest side of a table, facing it, slid along
 // so it doesn't overlap the chairs already there; a nightstand goes beside the head of a bed; a
 // coffee table in front of the sofa; a pendant over the table; a range hood over the hob…
-import type { CatalogItem } from '@/furniture/catalog'
+import { roleOf, type CatalogItem } from '@/furniture/catalog'
 import type { SceneObject, Vec3 } from '@/store/workspace'
 import { catalogItemOf, footprint } from './footprint'
 import type { Vec2 } from './types'
@@ -70,11 +70,14 @@ const distTo = (f: Fp, p: Vec2) => {
  * (`objects`, on the same floor, not including itself). Null: nothing near it belongs with it.
  */
 export function arrange(item: CatalogItem, size: Vec3, p: Vec2, objects: SceneObject[], opts: { wallSnapped?: boolean } = {}): Arranged | null {
-  const rules = RULES[item.id]
+  const rules = RULES[roleOf(item)]
   if (!rules) return null
   const fps: Fp[] = objects
     .filter((o) => !o.parentId && o.visible !== false)
-    .map((o) => ({ ...footprint(o), o, id: catalogItemOf(o)?.id ?? '' }))
+    .map((o) => {
+      const it = catalogItemOf(o)
+      return { ...footprint(o), o, id: it ? roleOf(it) : '' }
+    })
   const [w, , d] = size
   for (const r of rules) {
     const near = fps.filter((f) => r.to.includes(f.id)).sort((a, b) => distTo(a, p) - distTo(b, p))

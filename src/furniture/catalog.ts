@@ -24,6 +24,10 @@ export interface CatalogItem {
   model?: { file: string; credit: string; license: string }
   /** Short note in the catalog. */
   note?: string
+  /** A picture of it (model library), in public/models/. */
+  thumb?: string
+  /** What kind of piece a library model is (a chair, a table…), for smart placement and the plan drawing. */
+  role?: string
   /**
    * Lamps: the bulb's default output. The light sits on the piece's glowing (emissive) parts, or at
    * `at` (fractions of its size: x and z from the centre, y from the bottom) when it has none.
@@ -129,3 +133,61 @@ export const CATALOG: CatalogItem[] = [
 ]
 
 export const itemById = (id?: string) => CATALOG.find((c) => c.id === id)
+
+/** What a piece is, by its id (catalog pieces) or its name (library models): a chair, a sofa, a bed… */
+export function roleOf(item: Pick<CatalogItem, 'id' | 'name'> & { role?: string }): string {
+  if (item.role) return item.role
+  if (!item.id.startsWith('ph-')) return item.id
+  const n = item.name.toLowerCase()
+  const rules: [RegExp, string][] = [
+    [/bar ?stool|stool/, 'bar-stool'],
+    [/office chair|desk chair/, 'office-chair'],
+    [/armchair|lounge chair|wing ?chair/, 'armchair'],
+    [/chair/, 'dining-chair'],
+    [/sofa|couch|settee/, 'sofa'],
+    [/coffee table/, 'coffee-table'],
+    [/side table|end table/, 'side-table'],
+    [/round table/, 'round-table'],
+    [/desk/, 'desk'],
+    [/table/, 'dining-table'],
+    [/nightstand|bedside/, 'nightstand'],
+    [/bed/, 'bed-double'],
+    [/wardrobe|closet/, 'wardrobe'],
+    [/shelf|shelves|bookcase/, 'bookshelf'],
+    [/cabinet|dresser|drawer|chest/, 'dresser'],
+    [/plant|fern|tree|cactus|flower/, 'plant'],
+    [/lamp|light|chandelier/, 'floor-lamp'],
+    [/rug|carpet/, 'rug'],
+  ]
+  return rules.find(([re]) => re.test(n))?.[1] ?? item.id
+}
+
+/** A library model from public/models/library.json (Poly Haven, CC0). */
+interface LibraryEntry {
+  id: string
+  name: string
+  category: Category
+  size: Vec3
+  file: string
+  thumb?: string
+  credit: string
+  license: string
+}
+
+let library: Promise<number> | null = null
+/** Add the model library (downloaded at build time) to the catalog, once. Resolves to how many it added. */
+export function loadLibrary(): Promise<number> {
+  library ??= fetch(`${import.meta.env.BASE_URL}models/library.json`)
+    .then((r) => (r.ok ? (r.json() as Promise<LibraryEntry[]>) : []))
+    .catch(() => [] as LibraryEntry[])
+    .then((list) => {
+      for (const e of list) {
+        if (CATALOG.some((c) => c.id === e.id)) continue
+        const item: CatalogItem = { id: e.id, name: e.name, category: e.category, size: e.size, kind: 'model', mount: 'floor', model: { file: e.file, credit: e.credit, license: e.license }, thumb: e.thumb }
+        item.role = roleOf(item)
+        CATALOG.push(item)
+      }
+      return list.length
+    })
+  return library
+}

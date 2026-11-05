@@ -30,6 +30,9 @@ jobs:
       # Photoreal furniture (Khronos glTF Sample Assets, CC0 / CC BY 4.0); missing ones are hidden in the catalog.
       - run: npm run models
         continue-on-error: true
+      # The model library: furniture, lamps, plants and decor from Poly Haven (CC0), 1K textures, size-capped.
+      - run: npm run library
+        continue-on-error: true
       - run: npm test
       - run: npm run build
         env:
