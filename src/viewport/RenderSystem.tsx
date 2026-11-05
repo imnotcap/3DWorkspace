@@ -9,6 +9,7 @@ import { applyPose, evaluate, focalToFov, framePose, frameRect, orbitRadius, pos
 import { tourFrames, tourPath, tourPose } from '@/plan/tour'
 import { getEngine } from './Renderer'
 import { daylight } from './sky'
+import { INTERIOR_ENV } from './interior'
 
 const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()))
 const yieldToUi = () => new Promise<void>((r) => setTimeout(r, 0))
@@ -145,6 +146,18 @@ export function RenderBridge() {
       gl.setSize(w, h, false)
       const cam = new PerspectiveCamera()
       const pathtrace = s.settings.engine === 'pathtrace'
+      // Interior shots in real time: daylight through the windows, the sky's ambient light turned down.
+      // (The path tracer traces the real light and gets neither.)
+      const prevEnv = scene.environmentIntensity
+      const closed = opts.ceilings && !pathtrace
+      scene.environmentIntensity = ((scene.userData.envBase as number | undefined) ?? prevEnv) * (closed ? INTERIOR_ENV : 1)
+      const portals: [Object3D, boolean][] = []
+      scene.traverse((o) => {
+        if (o.userData.portal) {
+          portals.push([o, o.visible])
+          o.visible = closed
+        }
+      })
       let first = true
       const draw: Draw = async (pose, frame, o = {}) => {
         applyObjectsAt(frame)
@@ -161,6 +174,8 @@ export function RenderBridge() {
         gl.setPixelRatio(prevRatio)
         gl.setSize(prevSize.x, prevSize.y, false)
         scene.background = prevBg
+        scene.environmentIntensity = prevEnv
+        portals.forEach(([o, v]) => (o.visible = v))
         gl.setClearColor(prevClear, prevAlpha)
         hidden.forEach((o) => (o.visible = true))
         toggled.forEach(([o, v]) => (o.visible = v))

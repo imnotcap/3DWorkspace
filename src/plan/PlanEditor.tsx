@@ -10,6 +10,8 @@ import { add, analyse, clampOpening, dist, dot, mul, norm, perp, projectOnWall, 
 import { tourPath, tourPose } from './tour'
 import { DRAWN_KINDS, OPENING_DEFAULTS, type Opening, type Vec2, type Wall } from './types'
 import { placeItem } from './place'
+import { arrange } from './arrange'
+import { planPointer } from '@/lib/pointer'
 
 interface ViewXf {
   scale: number
@@ -23,6 +25,10 @@ type Drag =
   | { kind: 'wall'; id: string; start: Vec2; original: ReturnType<typeof activeProject>['walls'] }
   | { kind: 'opening'; id: string }
   | { kind: 'object'; id: string; offset: Vec2 }
+  /** Moving several selected pieces together: where each started and where the pointer started. */
+  | { kind: 'objects'; start: Vec2; items: { id: string; at: Vec2 }[]; moved: boolean }
+  /** Box select (Shift-drag on empty floor). */
+  | { kind: 'marquee'; start: Vec2; add: boolean }
   | { kind: 'rotate'; id: string }
   | { kind: 'tour'; id: string }
   | { kind: 'room-rect'; start: Vec2 }
@@ -44,6 +50,8 @@ export function PlanEditor() {
   const tool = useWorkspace((s) => s.planTool)
   const sel = useWorkspace((s) => s.planSel)
   const selectedId = useWorkspace((s) => s.selectedId)
+  const selection = useWorkspace((s) => s.selection)
+  const [marquee, setMarquee] = useState<[Vec2, Vec2] | null>(null)
   const placing = useWorkspace((s) => s.placing)
   const openingKind = useWorkspace((s) => s.openingKind)
   // Snap off: the grid step becomes 1 mm (effectively free); walls and wall ends still snap.
@@ -64,7 +72,7 @@ export function PlanEditor() {
   const svg = useRef<SVGSVGElement>(null)
   const [size, setSize] = useState({ w: 800, h: 600 })
   const [xf, setXf] = useState<ViewXf>({ scale: 50, ox: 400, oy: 300 })
-  const [cursor, setCursor] = useState<{ p: Vec2; guideX?: number; guideY?: number; shift?: boolean } | null>(null)
+  const [cursor, setCursor] = useState<{ p: Vec2; guideX?: number; guideY?: number; shift?: boolean; alt?: boolean } | null>(null)
   const [chain, setChain] = useState<Vec2[]>([])
   const [rectStart, setRectStart] = useState<Vec2 | null>(null)
   /** A window being drawn by click, move, click (instead of press, drag, release). */
@@ -137,11 +145,13 @@ export function PlanEditor() {
   const ghost = useMemo(() => {
     if (!placeItemDef || !cursor || !placingSize) return null
     const snapped = placeItemDef.mount !== 'ceiling' && placeItemDef.id !== 'rug' ? snapToWall(cursor.p, placingSize[2], geom.walls.values()) : null
-    const c = snapped?.c ?? cursor.p
-    const yaw = snapped?.yaw ?? placeYaw
+    // Near something it goes with (a chair by a table, a nightstand by a bed…): stood the way it belongs. Alt: off.
+    const smart = cursor.alt ? null : arrange(placeItemDef, placingSize, cursor.p, objects, { wallSnapped: !!snapped })
+    const c = smart?.c ?? snapped?.c ?? cursor.p
+    const yaw = smart?.yaw ?? snapped?.yaw ?? placeYaw
     const fake = { transform: { position: [c[0], 0, c[1]], rotation: [0, yaw, 0], scale: [1, 1, 1] }, furniture: { item: placeItemDef.id, size: placingSize } } as unknown as SceneObject
-    return { c, yaw, corners: footprint(fake).corners, snapped: !!snapped }
-  }, [placeItemDef, cursor, placingSize, geom, placeYaw])
+    return { c, yaw, corners: footprint(fake).corners, snapped: !!snapped || !!smart, label: smart?.label }
+  }, [placeItemDef, cursor, placingSize, geom, placeYaw, objects])
 
   // ───────── keyboard ─────────
   useEffect(() => {
@@ -294,6 +304,14 @@ export function PlanEditor() {
     }
     if (kind === 'object') {
       const o = project.objects.find((x) => x.id === id)
+      // Shift/Ctrl-click: add to (or take out of) the selection.
+      if (e.shiftKey || e.ctrlKey || e.metaKey) return s.select(id, 'toggle')
+      // A piece of a multi-selection: the whole selection moves with it.
+      const group = s.selection.length > 1 && s.selection.includes(id) ? objects.filter((x) => s.selection.includes(x.id)) : null
+      if (group) {
+        drag.current = { kind: 'objects', start: p, items: group.map((x) => ({ id: x.id, at: [x.transform.position[0], x.transform.position[2]] as Vec2 })), moved: false }
+        return
+      }
       s.select(id)
       if (o) {
         s.checkpoint('Move')
@@ -318,6 +336,12 @@ export function PlanEditor() {
       drag.current = { kind: 'tour', id }
       return
     }
+    // Shift-drag on a room or empty floor: box select (Ctrl/Cmd as well: add to the selection).
+    if (e.shiftKey && tool === 'select' && (kind === 'room' || !kind)) {
+      drag.current = { kind: 'marquee', start: p, add: e.ctrlKey || e.metaKey }
+      setMarquee([p, p])
+      return
+    }
     if (kind === 'room') {
       s.selectPlan({ kind: 'room', id: level.id, at: [Number(target!.getAttribute('data-x')), Number(target!.getAttribute('data-y'))] })
       return
@@ -329,13 +353,30 @@ export function PlanEditor() {
 
   const onPointerMove = (e: RPointerEvent<SVGSVGElement>) => {
     const p = toPlan(e)
+    planPointer.p = p
     const d = drag.current
     const s = ws()
+    if (d?.kind === 'marquee') return setMarquee([d.start, p])
+    if (d?.kind === 'objects') {
+      let delta = sub(p, d.start)
+      if (!d.moved && Math.hypot(delta[0], delta[1]) * xf.scale < 3) return
+      if (!d.moved) {
+        s.checkpoint(`Move ${d.items.length} objects`)
+        drag.current = { ...d, moved: true }
+      }
+      if (!e.altKey) delta = [Math.round(delta[0] / grid) * grid, Math.round(delta[1] / grid) * grid]
+      const objs = activeProject(s).objects
+      for (const it of d.items) {
+        const o = objs.find((x) => x.id === it.id)
+        if (o) s.updateObject(o.id, { transform: { ...o.transform, position: [it.at[0] + delta[0], o.transform.position[1], it.at[1] + delta[1]] } })
+      }
+      return
+    }
     if (!d) {
       if (tool === 'wall' || tool === 'room' || (tool === 'arc' && !arc?.c)) {
         const r = snapPoint(p, snapOpts(tool === 'wall' ? chain.at(-1) : null, e.shiftKey))
         setCursor({ p: r.p, guideX: r.guideX, guideY: r.guideY })
-      } else setCursor({ p, shift: e.shiftKey })
+      } else setCursor({ p, shift: e.shiftKey, alt: e.altKey })
       return
     }
     if (d.kind === 'pan') return setXf((v) => ({ ...v, ox: d.ox + e.clientX - d.sx, oy: d.oy + e.clientY - d.sy }))
@@ -435,11 +476,19 @@ export function PlanEditor() {
       if (!o) return
       let c = add(p, d.offset)
       let yaw = o.transform.rotation[1]
-      const item = itemById(o.furniture?.item)
+      const item = catalogItemOf(o) ?? itemById(o.furniture?.item)
       if (!e.altKey) {
         const snapped = item?.mount !== 'ceiling' && item?.id !== 'rug' ? snapToWall(c, objectSize(o)[2], geom.walls.values(), 0.25) : null
-        if (snapped) ({ c, yaw } = snapped)
-        else c = [Math.round(c[0] / grid) * grid, Math.round(c[1] / grid) * grid]
+        // Dragged up to something it goes with: stood the way it belongs (Alt: free).
+        const smart = item ? arrange(item, objectSize(o), c, objects.filter((x) => x.id !== o.id), { wallSnapped: !!snapped }) : null
+        if (smart) {
+          ;({ c, yaw } = smart)
+          setSizeLabel({ at: c, text: smart.label })
+        } else {
+          setSizeLabel(null)
+          if (snapped) ({ c, yaw } = snapped)
+          else c = [Math.round(c[0] / grid) * grid, Math.round(c[1] / grid) * grid]
+        }
       }
       s.updateObject(o.id, { transform: { ...o.transform, position: [c[0], o.transform.position[1], c[1]], rotation: [o.transform.rotation[0], yaw, o.transform.rotation[2]] } })
       return
@@ -462,6 +511,25 @@ export function PlanEditor() {
     const d = drag.current
     drag.current = null
     setSizeLabel(null)
+    if (d?.kind === 'marquee') {
+      setMarquee(null)
+      const q = toPlan(e)
+      const [x0, x1] = [Math.min(d.start[0], q[0]), Math.max(d.start[0], q[0])]
+      const [y0, y1] = [Math.min(d.start[1], q[1]), Math.max(d.start[1], q[1])]
+      const hit = objects.filter((o) => {
+        const c = footprint(o).c
+        return c[0] >= x0 && c[0] <= x1 && c[1] >= y0 && c[1] <= y1
+      })
+      const s = ws()
+      s.selectMany(d.add ? [...s.selection, ...hit.map((o) => o.id)] : hit.map((o) => o.id))
+      return
+    }
+    // A click (no drag) on a piece of a multi-selection selects just that piece.
+    if (d?.kind === 'objects' && !d.moved) {
+      const hitId = ((e.target as Element).closest('[data-kind="object"]') as Element | null)?.getAttribute('data-id')
+      if (hitId) ws().select(hitId)
+      return
+    }
     if (d?.kind === 'draw-opening') {
       const w = walls.find((x) => x.id === d.wallId)
       if (!w) return
@@ -505,10 +573,11 @@ export function PlanEditor() {
         theme: DARK_THEME,
         selection: sel ? { kind: sel.kind, id: sel.id, at: sel.at } : null,
         selectedObject: selectedId,
+        selectedObjects: selection,
         dimensions: xf.scale > 28,
         interactive: true,
       }),
-    [geom, level.id, walls, openings, project.rooms, objects, below, xf.scale, sel, selectedId],
+    [geom, level.id, walls, openings, project.rooms, objects, below, xf.scale, sel, selectedId, selection],
   )
 
   const px = (n: number) => n / xf.scale
@@ -563,7 +632,7 @@ export function PlanEditor() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerLeave={() => setCursor(null)}
+        onPointerLeave={() => ((planPointer.p = null), setCursor(null))}
         onDoubleClick={() => setChain([])}
         onContextMenu={(e) => (e.preventDefault(), setChain([]), setArc(null))}
         onWheel={onWheel}
@@ -707,6 +776,20 @@ export function PlanEditor() {
                 )
               })
             })()}
+          {marquee && (
+            <rect
+              x={Math.min(marquee[0][0], marquee[1][0])}
+              y={Math.min(marquee[0][1], marquee[1][1])}
+              width={Math.abs(marquee[1][0] - marquee[0][0])}
+              height={Math.abs(marquee[1][1] - marquee[0][1])}
+              fill="#4c8dff"
+              fillOpacity={0.1}
+              stroke="#4c8dff"
+              strokeWidth={px(1)}
+              strokeDasharray={`${px(4)} ${px(3)}`}
+              pointerEvents="none"
+            />
+          )}
           {sizeLabel && (
             <text x={sizeLabel.at[0]} y={sizeLabel.at[1] - px(14)} fontSize={px(12)} fill="#ffffff" textAnchor="middle" stroke="#141414" strokeWidth={px(3)} paintOrder="stroke" pointerEvents="none">
               {sizeLabel.text}
@@ -774,7 +857,16 @@ export function PlanEditor() {
             </g>
           )}
           {ghost && (
-            <polygon points={ghost.corners.map((q) => q.join(',')).join(' ')} fill="#4c8dff33" stroke={ghost.snapped ? '#46a758' : '#4c8dff'} strokeWidth={px(1.5)} pointerEvents="none" />
+            <g pointerEvents="none">
+              <polygon points={ghost.corners.map((q) => q.join(',')).join(' ')} fill="#4c8dff33" stroke={ghost.snapped ? '#46a758' : '#4c8dff'} strokeWidth={px(1.5)} />
+              {/* Its front. */}
+              <line x1={ghost.c[0]} y1={ghost.c[1]} x2={ghost.c[0] + Math.sin(ghost.yaw) * 0.35} y2={ghost.c[1] + Math.cos(ghost.yaw) * 0.35} stroke={ghost.snapped ? '#46a758' : '#4c8dff'} strokeWidth={px(1.5)} />
+              {ghost.label && (
+                <text x={ghost.c[0]} y={ghost.c[1] - px(14)} fontSize={px(11)} fill="#46a758" textAnchor="middle" fontFamily="'Inter Variable', Inter, sans-serif">
+                  {ghost.label}
+                </text>
+              )}
+            </g>
           )}
           {(tool === 'wall' || tool === 'room' || (tool === 'arc' && !arc?.c)) && cursor && (
             <g pointerEvents="none">

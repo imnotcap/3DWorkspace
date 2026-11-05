@@ -79,6 +79,8 @@ export interface DrawInput {
   theme: PlanTheme
   selection?: { kind: string; id: string; at?: Vec2 } | null
   selectedObject?: string | null
+  /** Everything selected (multi-selection). */
+  selectedObjects?: string[]
   /** Wall lengths (always on paper; on screen when zoomed in). */
   dimensions: boolean
   /** Interactive hit areas (editor only). */
@@ -153,7 +155,7 @@ export function drawPlan(i: DrawInput): SvgNode[] {
   // Furniture (drawn under walls, so pieces against a wall read cleanly).
   for (const o of i.objects) {
     const fp = footprint(o)
-    const sel = i.selectedObject === o.id
+    const sel = i.selectedObject === o.id || !!i.selectedObjects?.includes(o.id)
     const item = itemById(o.furniture?.item)
     const isRug = o.furniture?.item === 'rug'
     out.push({

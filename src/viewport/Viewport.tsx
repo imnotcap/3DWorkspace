@@ -29,6 +29,7 @@ import { Model, withOriginalMaterials, type Tree } from './Model'
 import { CameraView, RenderBridge, tourActive } from './RenderSystem'
 import { FinalRender } from './Renderer'
 import { daylight } from './sky'
+import { INTERIOR_ENV } from './interior'
 import { wallSafeTransform } from '@/plan/constrain'
 import { HouseLevel } from './House'
 import { levelElevations } from '@/plan/levels'
@@ -49,7 +50,7 @@ const LIGHTING: Record<ShadingMode, { env: number; fill: number; key: number }> 
  * Editing modes are lit by a neutral studio (like Blender's Material Preview); Rendered uses the
  * scene's own light: the sky and sun for the time of day, plus the lamps.
  */
-function StudioEnvironment() {
+function StudioEnvironment({ interior }: { interior: boolean }) {
   const gl = useThree((s) => s.gl)
   const scene = useThree((s) => s.scene)
   const shading = useWorkspace((s) => s.shading)
@@ -74,10 +75,12 @@ function StudioEnvironment() {
   }, [scene, rendered, ambience, studio])
 
   useEffect(() => {
-    scene.environmentIntensity = intensity
+    // The full sky light, kept for renders that switch between inside and outside views.
+    scene.userData.envBase = intensity
+    scene.environmentIntensity = intensity * (interior ? INTERIOR_ENV : 1)
     gl.toneMappingExposure = exposure
     viewport.invalidate()
-  }, [gl, scene, intensity, exposure])
+  }, [gl, scene, intensity, exposure, interior])
   return null
 }
 
@@ -359,12 +362,41 @@ function keepOutOfWalls(o: Object3D) {
   if (safe !== t) o.position.fromArray(safe.position)
 }
 
-/** Gizmo release → one undoable store update. */
+/** The rest of a multi-selection while the gizmo moves the primary: where each started. */
+let group: { start: Vec3; items: { o: Object3D; id: string; at: Vec3 }[] } | null = null
+
+function groupStart(target: Object3D) {
+  const s = useWorkspace.getState()
+  const others = s.selection.filter((id) => id !== target.userData.id)
+  group = others.length
+    ? { start: target.position.toArray() as Vec3, items: others.flatMap((id) => (viewport.objects.get(id) ? [{ id, o: viewport.objects.get(id)!, at: viewport.objects.get(id)!.position.toArray() as Vec3 }] : [])) }
+    : null
+}
+
+/** Moving the primary moves the whole selection by the same amount. */
+function groupFollow(target: Object3D, tool: string) {
+  if (!group || tool !== 'translate') return
+  const d = [target.position.x - group.start[0], target.position.y - group.start[1], target.position.z - group.start[2]]
+  for (const it of group.items) it.o.position.set(it.at[0] + d[0], it.at[1] + d[1], it.at[2] + d[2])
+}
+
+/** Gizmo release → one undoable store update (for the whole selection when several move together). */
 function commitTransform(o: Object3D, tool: keyof typeof TOOL_LABEL) {
   const id = o.userData.id as string
   const s = useWorkspace.getState()
   const transform = { position: o.position.toArray() as Vec3, rotation: [o.rotation.x, o.rotation.y, o.rotation.z] as Vec3, scale: o.scale.toArray() as Vec3 }
   const obj = activeProject(s).objects.find((x) => x.id === id)
+  const moved = group && tool === 'translate' ? group : null
+  group = null
+  if (moved && !obj?.keys?.length) {
+    s.checkpoint(`Move ${moved.items.length + 1} objects`)
+    s.updateObject(id, { transform })
+    for (const it of moved.items) {
+      const x = activeProject(useWorkspace.getState()).objects.find((q) => q.id === it.id)
+      if (x) s.updateObject(it.id, { transform: { ...x.transform, position: it.o.position.toArray() as Vec3 } })
+    }
+    return
+  }
   // Animated objects auto-key: the edit becomes a keyframe at the current frame.
   if (obj?.keys?.length) s.setObjectKey(id, s.frame, transform, TOOL_LABEL[tool])
   else s.commit(TOOL_LABEL[tool], id, { transform })
@@ -395,6 +427,10 @@ function SceneContent() {
   // While walking, the tour's own choice (ceilings on unless turned off for the tour and video).
   const showCeilings = walking ? project.tour.ceilings !== false : ceilingSetting
   const showUpper = useWorkspace((s) => s.settings.showUpperLevels) || walking
+  // A closed house in the real-time rendered look: daylight comes in through the windows only.
+  const engineRaster = useWorkspace((s) => s.settings.engine === 'raster')
+  const shadingNow = useWorkspace((s) => s.shading)
+  const interior = showCeilings && shadingNow === 'rendered' && engineRaster
   const elevations = useMemo(() => levelElevations(project.levels), [project.levels])
   const activeIndex = Math.max(0, project.levels.findIndex((l) => l.id === project.activeLevelId))
   // Top-level objects grouped by the floor they stand on (unknown floors → the first).
@@ -430,7 +466,7 @@ function SceneContent() {
 
   return (
     <>
-      <StudioEnvironment />
+      <StudioEnvironment interior={interior} />
       <hemisphereLight args={['#ffffff', '#3a3a3a', light.fill]} />
 
       {/* Everything that is part of the picture (the path tracer bakes this; helpers stay out). */}
@@ -444,7 +480,7 @@ function SceneContent() {
           visible={showUpper || i <= activeIndex}
           userData={{ levelIndex: i }}
         >
-          <HouseLevel project={project} level={level} index={i} ceilings={showCeilings} />
+          <HouseLevel project={project} level={level} index={i} ceilings={showCeilings} daylight={interior} />
           {(byLevel.get(level.id) ?? []).map((o) => (
             <Model key={o.id} obj={o} selectedId={selectedId} shading={shading} tree={tree} />
           ))}
@@ -474,7 +510,18 @@ function SceneContent() {
           </>
         )}
         {target && tool !== 'select' && (
-          <TransformControls object={target} mode={tool} size={0.8} translationSnap={snap ? gridStep : null} rotationSnap={snap ? Math.PI / 12 : null} scaleSnap={snap ? 0.05 : null} onChange={() => invalidate()} onObjectChange={() => keepOutOfWalls(target)} onMouseUp={() => commitTransform(target, tool)} />
+          <TransformControls
+            object={target}
+            mode={tool}
+            size={0.8}
+            translationSnap={snap ? gridStep : null}
+            rotationSnap={snap ? Math.PI / 12 : null}
+            scaleSnap={snap ? 0.05 : null}
+            onChange={() => invalidate()}
+            onMouseDown={() => groupStart(target)}
+            onObjectChange={() => (keepOutOfWalls(target), groupFollow(target, tool))}
+            onMouseUp={() => commitTransform(target, tool)}
+          />
         )}
       </group>
     </>

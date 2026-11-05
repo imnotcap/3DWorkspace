@@ -11,6 +11,7 @@ import { viewport } from '@/viewport/bridge'
 export function Outliner() {
   const project = useActiveProject()
   const selectedId = useWorkspace((s) => s.selectedId)
+  const selection = useWorkspace((s) => s.selection)
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(true)
   // Models start open; this records the ones you closed.
@@ -86,7 +87,7 @@ export function Outliner() {
           <span className="pr-1 font-mono text-2xs text-faint">{children.get(null)?.length ?? 0}</span>
         </div>
 
-        {open && rows.map(({ o, depth, expanded, hasKids }) => <Row key={o.id} o={o} depth={depth} expanded={expanded} hasKids={hasKids} selected={o.id === selectedId} onToggle={() => toggle(o.id)} count={children.get(o.id)?.length ?? 0} />)}
+        {open && rows.map(({ o, depth, expanded, hasKids }) => <Row key={o.id} o={o} depth={depth} expanded={expanded} hasKids={hasKids} selected={o.id === selectedId || selection.includes(o.id)} onToggle={() => toggle(o.id)} count={children.get(o.id)?.length ?? 0} />)}
 
         {open && project.objects.length === 0 && <p className="ml-7 py-1 text-2xs text-faint">Empty</p>}
       </div>
@@ -100,7 +101,7 @@ function Row({ o, depth, expanded, hasKids, selected, onToggle, count }: { o: Sc
   const Icon = o.isGroup ? (o.parentId ? Folder : Box) : Shapes
   return (
     <div
-      onPointerDown={() => select(o.id)}
+      onPointerDown={(e) => select(o.id, e.shiftKey || e.ctrlKey || e.metaKey ? 'toggle' : undefined)}
       onDoubleClick={() => setEditing(true)}
       data-outliner-row={o.name}
       className={cn(

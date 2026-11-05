@@ -4,6 +4,7 @@ import { download, viewport } from '@/viewport/bridge'
 import { newPrimitive, restingHeight } from './primitives'
 import { autoTour } from '@/plan/tour'
 import { uid } from '@/store/workspace'
+import { copySelection, cutSelection, duplicateSelection, pasteClipboard, selectAll } from './clipboard'
 
 let renderAbort: AbortController | null = null
 
@@ -33,7 +34,8 @@ export const actions = {
 
   /** Delete the selected object, or the selected wall / door / window / tour point. */
   deleteSelected() {
-    const { selectedId, removeObject, planSel, editPlan, selectPlan } = ws()
+    const { selectedId, selection, removeObject, removeObjects, planSel, editPlan, selectPlan } = ws()
+    if (selection.length > 1) return removeObjects(selection)
     if (selectedId) return removeObject(selectedId)
     if (!planSel) return
     if (planSel.kind === 'wall')
@@ -254,8 +256,13 @@ export const actions = {
 
   duplicateSelected() {
     const s = ws()
+    if (s.selection.length > 1) return duplicateSelection()
     if (s.selectedId) s.duplicateObject(s.selectedId)
   },
+  copy: () => void copySelection(),
+  cut: () => cutSelection(),
+  paste: () => pasteClipboard(),
+  selectAll: () => selectAll(),
 
   /** Claude parts → separate primitive objects you can edit one by one. */
   separateSelected() {

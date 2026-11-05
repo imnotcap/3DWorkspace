@@ -254,7 +254,10 @@ interface WorkspaceState {
   openProject: (id: string) => void
   projects: Project[]
   activeProjectId: string
+  /** The primary selection (the gizmo and the Object panel follow it). */
   selectedId: string | null
+  /** Everything selected (Shift/Ctrl-click, box select), the primary last. Kept in step with selectedId. */
+  selection: string[]
   shading: ShadingMode
   tool: Tool
   propertyTab: PropertyTab
@@ -295,7 +298,14 @@ interface WorkspaceState {
   /** Undoable update. */
   commit: (label: string, id: string, patch: Partial<SceneObject>) => void
   removeObject: (id: string) => void
-  select: (id: string | null) => void
+  /** Select one object; `toggle` adds it to / removes it from the selection (Shift/Ctrl-click). */
+  select: (id: string | null, mode?: 'toggle') => void
+  /** Select several (box select, select all, paste). The last becomes the primary. */
+  selectMany: (ids: string[]) => void
+  /** One undo step: add ready-made objects (ids and parents already set), select the top-level ones. */
+  insertObjects: (label: string, objects: SceneObject[]) => void
+  /** One undo step: delete these objects (and what is in them). */
+  removeObjects: (ids: string[]) => void
   checkpoint: (label: string) => void
   undo: () => void
   redo: () => void
@@ -410,6 +420,7 @@ export const useWorkspace = create<WorkspaceState>()(
       projects: [first],
       activeProjectId: first.id,
       selectedId: null,
+      selection: [],
       shading: 'material',
       tool: 'select',
       propertyTab: null,
@@ -638,7 +649,43 @@ export const useWorkspace = create<WorkspaceState>()(
           }
         })
       },
-      select: (id) => set(id ? { selectedId: id, planSel: null } : { selectedId: null }),
+      select: (id, mode) =>
+        set((s) => {
+          if (!id) return { selectedId: null, selection: [] }
+          if (mode !== 'toggle') return { selectedId: id, selection: [id], planSel: null }
+          if (s.selection.includes(id)) {
+            const selection = s.selection.filter((x) => x !== id)
+            return { selection, selectedId: selection.at(-1) ?? null }
+          }
+          return { selection: [...s.selection.filter((x) => x !== id), id], selectedId: id, planSel: null }
+        }),
+      selectMany: (ids) => set(ids.length ? { selection: [...new Set(ids)], selectedId: ids.at(-1)!, planSel: null } : { selection: [], selectedId: null }),
+      insertObjects: (label, objects) => {
+        if (!objects.length) return
+        get().checkpoint(label)
+        set((s) =>
+          patchActive(s, (p) => {
+            const taken = p.objects.map((o) => o.name)
+            const added = objects.map((o) => {
+              const name = uniqueName(o.name, taken)
+              taken.push(name)
+              return { ...o, name }
+            })
+            return { ...p, objects: [...p.objects, ...added] }
+          }),
+        )
+        const ids = new Set(objects.map((o) => o.id))
+        get().selectMany(objects.filter((o) => !o.parentId || !ids.has(o.parentId)).map((o) => o.id))
+      },
+      removeObjects: (ids) => {
+        if (!ids.length) return
+        get().checkpoint(ids.length > 1 ? `Delete ${ids.length} objects` : 'Delete')
+        set((s) => {
+          const objects = activeProject(s).objects
+          const gone = new Set(ids.flatMap((id) => subtreeIds(objects, id)))
+          return { ...patchActive(s, (p) => ({ ...p, objects: p.objects.filter((o) => !gone.has(o.id)) })), selectedId: null, selection: [] }
+        })
+      },
 
       undo: () =>
         set((s) => {
@@ -791,6 +838,16 @@ export const useWorkspace = create<WorkspaceState>()(
     },
   ),
 )
+
+// The selection follows the primary: whatever sets `selectedId` directly (adding, deleting, undo,
+// switching project) leaves a selection of just that object, or none.
+useWorkspace.subscribe((s, prev) => {
+  if (s.selectedId === prev.selectedId && s.selection === prev.selection) return
+  const ok = s.selectedId === null ? s.selection.length === 0 : s.selection.at(-1) === s.selectedId
+  if (ok) return
+  const next = s.selectedId === null ? [] : s.selection === prev.selection ? [s.selectedId] : [...s.selection.filter((x) => x !== s.selectedId), s.selectedId]
+  useWorkspace.setState({ selection: next })
+})
 
 export const activeProject = (s: Pick<WorkspaceState, 'projects' | 'activeProjectId'>) =>
   s.projects.find((p) => p.id === s.activeProjectId) ?? s.projects[0]

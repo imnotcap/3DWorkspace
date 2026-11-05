@@ -227,13 +227,22 @@ export function obstaclesOn(g: WallGeom, side: 'left' | 'right', list: LevelBuil
   return out
 }
 
-export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGeom } {
+/** Daylight coming in through an outside opening: where, facing which way (into the room), how big. */
+export interface WindowPortal {
+  c: [number, number, number]
+  n: Vec2
+  w: number
+  h: number
+}
+
+export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGeom; portals: WindowPortal[] } {
   const { level, walls, openings, rooms, onUpgrade } = input
   const geom = analyse(walls)
   const group = new Group()
   group.name = `level:${level.id}`
   const bottom = input.levelIndex > 0 ? -level.slab : 0
   const plaster = finishMaterial(DEFAULT_WALL_FINISH, 'plaster', onUpgrade)
+  const portals: WindowPortal[] = []
   const exterior = finishMaterial(EXTERIOR_FINISH, 'wall', onUpgrade)
 
   const faceRoom = geom.faces.map((f) => roomFor(f, rooms, level.id))
@@ -334,6 +343,15 @@ export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGe
         }
       }
       if (!model) continue
+      // An opening to the outside lets daylight in (into the room side).
+      if (!w.parentId) {
+        const sg = g.segments.find((x) => u >= x.u0 && u <= x.u1) ?? g.segments[0]
+        if ((sg.left === null) !== (sg.right === null) && (o.kind !== 'door' && o.kind !== 'double-door')) {
+          const inward: Vec2 = sg.left !== null ? [g.n[0], g.n[1]] : [-g.n[0], -g.n[1]]
+          const p: Vec2 = [w.a[0] + g.d[0] * u + inward[0] * (g.h + 0.03), w.a[1] + g.d[1] * u + inward[1] * (g.h + 0.03)]
+          portals.push({ c: [p[0], o.sill + H / 2, p[1]], n: inward, w: Math.max(0.2, o.width - 0.1), h: Math.max(0.2, H - 0.1) })
+        }
+      }
       model.position.set(w.a[0] + g.d[0] * u, o.sill, w.a[1] + g.d[1] * u)
       model.rotation.y = -Math.atan2(g.d[1], g.d[0])
       model.traverse((x) => (x.userData.pick = { kind: 'opening', id: o.id } satisfies PickInfo))
@@ -391,8 +409,8 @@ export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGe
     const spec = presetById(ceilFinish.preset)?.ceiling
     const uv = spec ? boardFit(roof, frame, spec.tile, info?.beams) : (a: number, c: number): [number, number] => [a, c]
     const ceil = mesh(ceilingGeometry(f.polygon, roof, frame, ch, uv), finishMaterial(ceilFinish, 'ceiling', onUpgrade), 'ceiling', pick)
+    // Ceilings shade the rooms from the sun when they are shown (the roof is on).
     ceil.userData.ceiling = true
-    ceil.castShadow = false
     group.add(ceil)
     // Walls up to a ceiling higher than their top (gable ends, the high side of a lean-to).
     if (ceilingTop(roof) > level.height + 1e-3) {
@@ -417,7 +435,12 @@ export function buildLevel(input: LevelBuildInput): { group: Group; geom: PlanGe
     }
   })
 
-  return { group, geom }
+  // Glass lets the sun through: it must not cast shadows (in the real-time view).
+  group.traverse((o) => {
+    const m = o as Mesh
+    if (m.isMesh && m.material === GLASS) m.castShadow = false
+  })
+  return { group, geom, portals }
 }
 
 // ───────────── doors and windows ─────────────

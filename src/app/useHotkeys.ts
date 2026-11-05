@@ -19,6 +19,11 @@ export function useHotkeys() {
       if (mod && key === 'y') return e.preventDefault(), s.redo()
       if (mod && key === 'i') return e.preventDefault(), actions.importGlb()
       if (mod && key === 'e') return e.preventDefault(), void actions.exportSelected()
+      if (mod && key === 'c' && s.selection.length) return e.preventDefault(), actions.copy()
+      if (mod && key === 'x' && s.selection.length) return e.preventDefault(), actions.cut()
+      if (mod && key === 'v') return e.preventDefault(), actions.paste()
+      if (mod && key === 'd') return e.preventDefault(), actions.duplicateSelected()
+      if (mod && key === 'a') return e.preventDefault(), actions.selectAll()
       if (mod) return
       if (e.shiftKey && key === 'n') return s.addProject()
       if (e.shiftKey && key === 'd') return e.preventDefault(), actions.duplicateSelected()
