@@ -1,8 +1,8 @@
 // Furniture catalog (three.js-free, so panels can list it without loading 3D code).
 import type { Vec3 } from '@/store/workspace'
 
-export type Category = 'Living' | 'Dining' | 'Kitchen' | 'Bedroom' | 'Bathroom' | 'Office' | 'Lighting' | 'Decor' | 'Electrical' | 'Structure'
-export const CATEGORIES: Category[] = ['Living', 'Dining', 'Kitchen', 'Bedroom', 'Bathroom', 'Office', 'Lighting', 'Decor', 'Electrical', 'Structure']
+export type Category = 'Living' | 'Dining' | 'Kitchen' | 'Bedroom' | 'Bathroom' | 'Office' | 'Lighting' | 'Decor' | 'Electrical' | 'Outdoor' | 'Structure'
+export const CATEGORIES: Category[] = ['Living', 'Dining', 'Kitchen', 'Bedroom', 'Bathroom', 'Office', 'Lighting', 'Decor', 'Electrical', 'Outdoor', 'Structure']
 
 /** Default finish per material slot of a piece: a library preset and/or a colour. */
 export type SlotDefaults = Record<string, { color: string; preset?: string }>
@@ -116,6 +116,13 @@ export const CATALOG: CatalogItem[] = [
   { id: 'double-switch', name: 'Double switch', category: 'Electrical', size: [0.085, 0.085, 0.011], kind: 'parametric', mount: 'wall', y: 1.0075, slots: { Plate: W('#f6f5f2', 'matte-white') } },
   { id: 'data-socket', name: 'TV / data socket', category: 'Electrical', size: [0.085, 0.085, 0.012], kind: 'parametric', mount: 'wall', y: 0.2575, slots: { Plate: W('#f6f5f2', 'matte-white') } },
   { id: 'radiator', name: 'Panel radiator', category: 'Electrical', size: [1.0, 0.6, 0.1], kind: 'parametric', mount: 'wall', y: 0.15, slots: { Body: W('#f4f3f0', 'matte-white'), Valve: CHROME }, note: 'Wall panels are built around it' },
+
+  // Outdoor: garden and terrace (resize them to fit).
+  { id: 'tree', name: 'Tree', category: 'Outdoor', size: [3.2, 5.5, 3.2], kind: 'parametric', mount: 'floor', slots: { Leaves: W('#4f8a35'), Trunk: W('#6b4f3a') } },
+  { id: 'bush', name: 'Bush', category: 'Outdoor', size: [1.1, 0.9, 1.0], kind: 'parametric', mount: 'floor', slots: { Leaves: W('#5a9a3c') } },
+  { id: 'hedge', name: 'Hedge', category: 'Outdoor', size: [3.0, 1.4, 0.6], kind: 'parametric', mount: 'floor', slots: { Leaves: W('#456f2e') } },
+  { id: 'paving', name: 'Terrace paving', category: 'Outdoor', size: [4.0, 0.04, 3.0], kind: 'parametric', mount: 'floor', slots: { Surface: W('#a9a49b', 'concrete') }, note: 'Stretch it to the terrace' },
+  { id: 'decking', name: 'Wood decking', category: 'Outdoor', size: [4.0, 0.06, 3.0], kind: 'parametric', mount: 'floor', slots: { Surface: W('#a4825f', 'oak') } },
 
   // Structure
   { id: 'stairs', name: 'Straight stairs', category: 'Structure', size: [1.0, 2.85, 3.6], kind: 'parametric', mount: 'floor', slots: { Treads: OAK, Structure: WHITE, Rail: BLACK_METAL }, note: 'Cuts the floor above' },

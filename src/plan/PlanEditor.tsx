@@ -3,12 +3,13 @@ import { itemById } from '@/furniture/catalog'
 import { cn } from '@/lib/cn'
 import { activeProject, uid, useActiveProject, useWorkspace, type SceneObject, type Vec3 } from '@/store/workspace'
 import { viewport } from '@/viewport/bridge'
-import { DARK_THEME, drawPlan, formatLength, type SvgNode } from './draw'
+import { DARK_THEME, PRESENT_THEME, drawPlan, formatLength, type SvgNode } from './draw'
+import { planSwatch } from '@/panels/MaterialGallery'
 import { moveEndpoints, moveWall, nearestWall, rectWalls, roundBetween, same, snapPoint, snapToWall } from './edit'
 import { catalogItemOf, footprint, objectSize } from './footprint'
 import { add, analyse, clampOpening, dist, dot, mul, norm, perp, projectOnWall, sub, wallFrame, wallLength, wallPolyline } from './geometry'
 import { tourPath, tourPose } from './tour'
-import { DRAWN_KINDS, OPENING_DEFAULTS, type Opening, type Vec2, type Wall } from './types'
+import { DEFAULT_FLOOR_FINISH, DRAWN_KINDS, OPENING_DEFAULTS, type Opening, type Vec2, type Wall } from './types'
 import { placeItem } from './place'
 import { arrange } from './arrange'
 import { planPointer } from '@/lib/pointer'
@@ -45,12 +46,15 @@ type Drag =
 const reactProps = (a: SvgNode['attrs']) => Object.fromEntries(Object.entries(a).map(([k, v]) => [k.startsWith('data-') ? k : k.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()), v]))
 const render = (n: SvgNode, key: number | string): ReactNode => createElement(n.tag, { key, ...reactProps(n.attrs) }, n.text ?? n.children?.map((c, i) => render(c, i)))
 
+const swatchId = (preset: string, color: string) => `floor-${preset}-${color.replace('#', '')}`
+
 export function PlanEditor() {
   const project = useActiveProject()
   const tool = useWorkspace((s) => s.planTool)
   const sel = useWorkspace((s) => s.planSel)
   const selectedId = useWorkspace((s) => s.selectedId)
   const selection = useWorkspace((s) => s.selection)
+  const present = useWorkspace((s) => s.settings.planStyle !== 'dark')
   const [marquee, setMarquee] = useState<[Vec2, Vec2] | null>(null)
   const placing = useWorkspace((s) => s.placing)
   const openingKind = useWorkspace((s) => s.openingKind)
@@ -558,6 +562,21 @@ export function PlanEditor() {
     })
   }
 
+  // Floor textures for the presentation drawing, made once per material and colour.
+  const [swatches, setSwatches] = useState<Record<string, { url: string; w: number; h: number }>>({})
+  useEffect(() => {
+    if (!present) return
+    let live = true
+    const want = new Set([...project.rooms.filter((r) => r.levelId === level.id && r.floor.preset).map((r) => `${r.floor.preset}|${r.floor.color}`), `${DEFAULT_FLOOR_FINISH.preset}|${DEFAULT_FLOOR_FINISH.color}`])
+    for (const k of want) {
+      if (swatches[k]) continue
+      const [preset, color] = k.split('|')
+      void planSwatch(preset, color).then((s) => live && s && setSwatches((v) => ({ ...v, [k]: s })))
+    }
+    return () => void (live = false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [present, project.rooms, level.id])
+
   // ───────── drawing ─────────
   const nodes = useMemo(
     () =>
@@ -570,14 +589,15 @@ export function PlanEditor() {
         objects,
         below,
         scale: xf.scale,
-        theme: DARK_THEME,
+        theme: present ? PRESENT_THEME : DARK_THEME,
+        floorFill: present ? (f) => (f.preset && swatches[`${f.preset}|${f.color}`] ? `url(#${swatchId(f.preset, f.color)})` : null) : undefined,
         selection: sel ? { kind: sel.kind, id: sel.id, at: sel.at } : null,
         selectedObject: selectedId,
         selectedObjects: selection,
         dimensions: xf.scale > 28,
         interactive: true,
       }),
-    [geom, level.id, walls, openings, project.rooms, objects, below, xf.scale, sel, selectedId, selection],
+    [geom, level.id, walls, openings, project.rooms, objects, below, xf.scale, sel, selectedId, selection, present, swatches],
   )
 
   const px = (n: number) => n / xf.scale
@@ -622,7 +642,7 @@ export function PlanEditor() {
   const minor = grid * Math.max(1, Math.round(10 / (grid * xf.scale)))
 
   return (
-    <div className="relative size-full overflow-hidden bg-[#141414]">
+    <div className={cn('relative size-full overflow-hidden', present ? 'bg-[#f2f3f5]' : 'bg-[#141414]')}>
       <svg
         ref={svg}
         width={size.w}
@@ -640,12 +660,18 @@ export function PlanEditor() {
       >
         <defs>
           <pattern id="minor" width={minor * xf.scale} height={minor * xf.scale} patternUnits="userSpaceOnUse" x={xf.ox} y={xf.oy}>
-            <path d={`M ${minor * xf.scale} 0 L 0 0 0 ${minor * xf.scale}`} fill="none" stroke="#1f1f1f" strokeWidth="1" />
+            <path d={`M ${minor * xf.scale} 0 L 0 0 0 ${minor * xf.scale}`} fill="none" stroke={present ? '#e6e8eb' : '#1f1f1f'} strokeWidth="1" />
           </pattern>
           <pattern id="major" width={xf.scale} height={xf.scale} patternUnits="userSpaceOnUse" x={xf.ox} y={xf.oy}>
             <rect width={xf.scale} height={xf.scale} fill="url(#minor)" />
-            <path d={`M ${xf.scale} 0 L 0 0 0 ${xf.scale}`} fill="none" stroke="#292929" strokeWidth="1" />
+            <path d={`M ${xf.scale} 0 L 0 0 0 ${xf.scale}`} fill="none" stroke={present ? '#d9dce1' : '#292929'} strokeWidth="1" />
           </pattern>
+          {/* Floors in their real texture (presentation drawing), one repeat each, in metres. */}
+          {Object.entries(swatches).map(([k, s]) => (
+            <pattern key={k} id={swatchId(...(k.split('|') as [string, string]))} width={s.w} height={s.h} patternUnits="userSpaceOnUse">
+              <image href={s.url} width={s.w} height={s.h} preserveAspectRatio="none" />
+            </pattern>
+          ))}
         </defs>
         <rect width="100%" height="100%" fill="url(#major)" />
         <g transform={`translate(${xf.ox} ${xf.oy}) scale(${xf.scale})`}>

@@ -1,13 +1,14 @@
 // Plan drawing as plain SVG nodes: rendered by the editor (React) and serialised for the PDF.
 import { itemById } from '@/furniture/catalog'
 import type { SceneObject } from '@/store/workspace'
-import { footprint } from './footprint'
+import { catalogItemOf, footprint } from './footprint'
+import { furnitureSymbol } from './symbols'
 import { add, clampOpening, mul, norm, sub, wallFrame, wallIdOf, wallLength, wallPolyline, type PlanGeom } from './geometry'
 import { roomFor } from './levels'
 import { DEFAULT_FLOOR_FINISH, OPENING_DEFAULTS, type Opening, type RoomInfo, type Vec2, type Wall } from './types'
 
 export interface SvgNode {
-  tag: 'g' | 'path' | 'polygon' | 'polyline' | 'line' | 'circle' | 'rect' | 'text'
+  tag: 'g' | 'path' | 'polygon' | 'polyline' | 'line' | 'circle' | 'ellipse' | 'rect' | 'text'
   attrs: Record<string, string | number>
   children?: SvgNode[]
   text?: string
@@ -28,6 +29,10 @@ export interface PlanTheme {
   /** Room fill: the floor colour mixed to this opacity. */
   floorAlpha: number
   font: string
+  /** Furniture drawn in detail and in its own colours (beds with pillows, sofa cushions…). */
+  detailed?: boolean
+  /** Outline colour of the detailed furniture. */
+  symbolLine?: string
 }
 
 export const DARK_THEME: PlanTheme = {
@@ -46,6 +51,25 @@ export const DARK_THEME: PlanTheme = {
   font: "'Inter Variable', Inter, system-ui, sans-serif",
 }
 
+/** Estate-agent style: light paper, dark walls, floors in their real texture, furniture in colour. */
+export const PRESENT_THEME: PlanTheme = {
+  wall: '#3b3b3d',
+  wallStroke: '#2a2a2c',
+  roomStroke: 'none',
+  text: '#2a2a2c',
+  subtext: '#55555a',
+  furnitureFill: '#ffffff',
+  furnitureStroke: '#6f6f74',
+  opening: '#3b3b3d',
+  dim: '#77777c',
+  ghost: '#d6d8dc',
+  selected: '#2f6fed',
+  floorAlpha: 1,
+  font: "'Inter Variable', Inter, system-ui, sans-serif",
+  detailed: true,
+  symbolLine: 'rgba(40,40,44,0.55)',
+}
+
 export const PAPER_THEME: PlanTheme = {
   wall: '#1d1d1f',
   wallStroke: '#1d1d1f',
@@ -61,6 +85,8 @@ export const PAPER_THEME: PlanTheme = {
   floorAlpha: 0.22,
   // svg2pdf maps the generic family to the PDF's built-in Helvetica.
   font: 'sans-serif',
+  detailed: true,
+  symbolLine: '#8a8a8e',
 }
 
 const pts = (p: Vec2[]) => p.map((q) => `${q[0].toFixed(4)},${q[1].toFixed(4)}`).join(' ')
@@ -83,6 +109,8 @@ export interface DrawInput {
   selectedObjects?: string[]
   /** Wall lengths (always on paper; on screen when zoomed in). */
   dimensions: boolean
+  /** A fill for a room's floor (a texture pattern), or null for its flat colour. */
+  floorFill?: (floor: { color: string; preset?: string }) => string | null
   /** Interactive hit areas (editor only). */
   interactive?: boolean
 }
@@ -117,7 +145,7 @@ export function drawPlan(i: DrawInput): SvgNode[] {
     const sel = i.selection?.kind === 'room' && i.selection.at && insideFace(i.selection.at, f.polygon)
     out.push({
       tag: 'polygon',
-      attrs: { points: pts(f.inner.length >= 3 ? f.inner : f.polygon), fill: sel ? T.selected : floor.color, 'fill-opacity': sel ? 0.35 : T.floorAlpha, stroke: sel ? T.selected : T.roomStroke, 'stroke-width': px(2), ...(i.interactive ? { 'data-kind': 'room', 'data-x': f.center[0], 'data-y': f.center[1] } : {}) },
+      attrs: { points: pts(f.inner.length >= 3 ? f.inner : f.polygon), fill: sel ? T.selected : (i.floorFill?.(floor) ?? floor.color), 'fill-opacity': sel ? 0.35 : T.floorAlpha, stroke: sel ? T.selected : T.roomStroke, 'stroke-width': px(2), ...(i.interactive ? { 'data-kind': 'room', 'data-x': f.center[0], 'data-y': f.center[1] } : {}) },
     })
     // Sloping ceilings: the ridge (dashed) or an arrow up the slope.
     const roof = info?.roof
@@ -158,17 +186,26 @@ export function drawPlan(i: DrawInput): SvgNode[] {
     const sel = i.selectedObject === o.id || !!i.selectedObjects?.includes(o.id)
     const item = itemById(o.furniture?.item)
     const isRug = o.furniture?.item === 'rug'
+    const sym = T.detailed ? furnitureSymbol(o, catalogItemOf(o) ?? item, fp.w, fp.d, { line: T.symbolLine ?? T.furnitureStroke, lw: px(0.8) }) : null
+    const detailed = !!sym?.nodes.length
     out.push({
       tag: 'polygon',
       attrs: {
         points: pts(fp.corners),
-        fill: isRug ? 'none' : T.furnitureFill,
-        stroke: sel ? T.selected : T.furnitureStroke,
+        // Detailed pieces draw themselves; the outline stays for picking and selection.
+        fill: detailed ? 'transparent' : isRug ? 'none' : T.furnitureFill,
+        stroke: sel ? T.selected : detailed ? 'none' : T.furnitureStroke,
         'stroke-width': px(sel ? 2 : 1),
-        'stroke-dasharray': isRug ? `${px(4)} ${px(3)}` : 'none',
+        'stroke-dasharray': isRug && !detailed ? `${px(4)} ${px(3)}` : 'none',
         ...(i.interactive ? { 'data-kind': 'object', 'data-id': o.id } : {}),
       },
     })
+    if (detailed) {
+      const deg = (-fp.yaw * 180) / Math.PI
+      // Under the outline (so a click lands on the piece), the selection ring drawn again on top.
+      out.splice(out.length - 1, 0, { tag: 'g', attrs: { transform: `translate(${fp.c[0].toFixed(4)} ${fp.c[1].toFixed(4)}) rotate(${deg.toFixed(3)})`, 'pointer-events': 'none' }, children: sym!.nodes })
+      continue
+    }
     // A short line marks the front.
     const f0 = fp.at(-fp.w * 0.3, fp.d / 2 - Math.min(0.06, fp.d * 0.2))
     const f1 = fp.at(fp.w * 0.3, fp.d / 2 - Math.min(0.06, fp.d * 0.2))

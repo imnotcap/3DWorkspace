@@ -1,4 +1,4 @@
-import { Magnet, Spline, Box, BrickWall, DoorOpen, Footprints, Maximize2, MousePointer2, PanelsTopLeft, Plus, Square, SquareDashed, AppWindow, Trash2 } from 'lucide-react'
+import { Magnet, Palette, Spline, Box, BrickWall, DoorOpen, Footprints, Maximize2, MousePointer2, PanelsTopLeft, Plus, Square, SquareDashed, AppWindow, Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { actions } from '@/lib/actions'
@@ -48,6 +48,7 @@ export function PlanToolbar() {
   const kind = useWorkspace((s) => s.openingKind)
   const thickness = useWorkspace((s) => s.settings.wallThickness)
   const snap = useWorkspace((s) => s.settings.snap)
+  const planStyle = useWorkspace((s) => s.settings.planStyle)
   const grid = useWorkspace((s) => s.settings.grid)
   const project = useActiveProject()
   const { setView, setPlanTool, setOpeningKind, updateSettings, setActiveLevel, editPlan } = useWorkspace.getState()
@@ -113,6 +114,12 @@ export function PlanToolbar() {
       )}
       <div className="flex-1" />
       <div className="flex items-center gap-0.5 rounded-lg bg-app/70 p-0.5">
+        <Tooltip label={planStyle === 'presentation' ? 'Presentation drawing: floors and furniture in colour (click for the dark working view)' : 'Dark working view (click for the presentation drawing)'} side="bottom">
+          <Seg active={planStyle === 'presentation'} onClick={() => updateSettings({ planStyle: planStyle === 'presentation' ? 'dark' : 'presentation' })} label="Presentation drawing">
+            <Palette className="size-3.5" />
+            <span className="hidden xl:inline">Colour</span>
+          </Seg>
+        </Tooltip>
         <Tooltip label={snap ? 'Snap to grid: on (plan and 3D)' : 'Snap to grid: off'} side="bottom">
           <Seg active={snap} onClick={() => updateSettings({ snap: !snap })} label="Snap to grid">
             <Magnet className="size-3.5" />

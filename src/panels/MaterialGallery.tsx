@@ -75,6 +75,55 @@ async function flatSample(preset: MaterialPreset): Promise<string | null> {
   return c.toDataURL('image/jpeg', 0.9)
 }
 
+/**
+ * A floor's texture for the plan drawing: one seamless repeat of it (its real size in metres),
+ * recoloured as in 3D.
+ */
+export async function planSwatch(presetId: string, color: string): Promise<{ url: string; w: number; h: number } | null> {
+  const preset = presetById(presetId)
+  if (!preset) return null
+  let url: string | null = null
+  let w = 1
+  let h = 1
+  if (preset.floor) {
+    const set = await (await import('@/viewport/pbrTextures')).pbrSet(preset.id).catch(() => null)
+    const img = set?.map?.image as (CanvasImageSource & { width: number; height: number }) | undefined
+    if (img && set) {
+      const c = document.createElement('canvas')
+      c.width = c.height = 512
+      c.getContext('2d')!.drawImage(img, 0, 0, 512, 512)
+      url = c.toDataURL('image/jpeg', 0.85)
+      w = h = set.tile
+    } else {
+      const ft = await import('@/viewport/floorTextures')
+      await ft.loadWood().catch(() => {})
+      const t = ft.floorCanvases(preset.id, preset.floor, 300)
+      url = t.color.toDataURL('image/jpeg', 0.85)
+      w = t.tileX
+      h = t.tileY
+    }
+  } else if (preset.ceiling) return null
+  else {
+    const set = await (await import('@/viewport/pbrTextures')).pbrSet(preset.id).catch(() => null)
+    const img = set?.map?.image as (CanvasImageSource & { width: number; height: number }) | undefined
+    if (img && set) {
+      const c = document.createElement('canvas')
+      c.width = c.height = 512
+      c.getContext('2d')!.drawImage(img, 0, 0, 512, 512)
+      url = c.toDataURL('image/jpeg', 0.85)
+      w = h = set.tile
+    } else if (preset.texture) {
+      url = ((await import('@/viewport/detailTextures')).detailTexture(preset.texture).image as HTMLCanvasElement).toDataURL('image/jpeg', 0.85)
+      // Detail maps are greyscale: tinted to the colour below. Planks are drawn longer (seen from above
+      // a metre-long repeat reads as bricks).
+      const planks = preset.texture === 'planks'
+      return { url: await tinted(url, color, '#bcbcbc'), w: planks ? 2.4 : 1, h: planks ? 0.8 : 1 }
+    }
+  }
+  if (!url) return null
+  return { url: await tinted(url, color, preset.color), w, h }
+}
+
 /** The preview recoloured the way the 3D view does it: × (colour ÷ the texture's mean colour). */
 async function tinted(url: string, color: string, own: string) {
   if (color.toLowerCase() === own.toLowerCase()) return url

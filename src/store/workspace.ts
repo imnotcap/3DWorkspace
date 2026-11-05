@@ -195,6 +195,8 @@ export type RenderEngine = 'pathtrace' | 'raster'
 export type Ambience = 'day' | 'evening' | 'night'
 
 export interface Settings {
+  /** The plan as a presentation drawing (light, textured floors, furniture in colour) or the dark working view. */
+  planStyle: 'presentation' | 'dark'
   showGrid: boolean
   showStats: boolean
   exposure: number
@@ -437,6 +439,7 @@ export const useWorkspace = create<WorkspaceState>()(
       placing: null,
       openingKind: 'door',
       settings: {
+        planStyle: 'presentation',
         showGrid: true,
         showStats: true,
         exposure: 1,
