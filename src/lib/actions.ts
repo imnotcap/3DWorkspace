@@ -3,7 +3,7 @@ import { activeProject, useWorkspace, type ShadingMode, type Transform, type Vec
 import { download, viewport } from '@/viewport/bridge'
 import { newPrimitive, restingHeight } from './primitives'
 import { autoTour } from '@/plan/tour'
-import { analyse, pointInPolygon } from '@/plan/geometry'
+import { analyse, distanceToPolygon, pointInPolygon } from '@/plan/geometry'
 import { levelElevations } from '@/plan/levels'
 import type { Vec2 } from '@/plan/types'
 import { uid } from '@/store/workspace'
@@ -246,20 +246,22 @@ export const actions = {
         const { footprint } = await import('@/plan/footprint')
         const first = p.levels[0].id
         const fps = p.objects.filter((o) => !o.parentId && o.visible !== false && (o.levelId ?? first) === sel.levelId && !/rug|paving|decking|socket|switch/.test(o.furniture?.item ?? '')).map((o) => footprint(o))
-        const clear = (q: Vec2) => {
-          if (!pointInPolygon(q, face.inner)) return false
+        const clear = (q: Vec2, wall: number, gap: number) => {
+          if (!pointInPolygon(q, face.inner) || distanceToPolygon(q, face.inner) < wall) return false
           for (const f of fps) {
             const dx = q[0] - f.c[0]
             const dz = q[1] - f.c[1]
             const lx = Math.abs(dx * Math.cos(f.yaw) - dz * Math.sin(f.yaw)) - f.w / 2
             const lz = Math.abs(dx * Math.sin(f.yaw) + dz * Math.cos(f.yaw)) - f.d / 2
-            if (Math.hypot(Math.max(0, lx), Math.max(0, lz)) < 0.45) return false
+            if (Math.hypot(Math.max(0, lx), Math.max(0, lz)) < gap) return false
           }
           return true
         }
         const spots: Vec2[] = []
         for (let r = 0; r <= 3; r += 0.15) for (let a = 0; a < 16; a++) spots.push([c[0] + r * Math.cos((a * Math.PI) / 8), c[1] + r * Math.sin((a * Math.PI) / 8)])
-        c = spots.find(clear) ?? c
+        // Well into the room first; closer to walls and furniture only if the room is tight.
+        const tiers: [number, number][] = [[1, 0.45], [0.8, 0.35], [0.6, 0.25], [0.4, 0.15]]
+        c = tiers.reduce<Vec2 | undefined>((found, [wall, gap]) => found ?? spots.find((q) => clear(q, wall, gap)), undefined) ?? c
       }
       eye = [c[0], (levelElevations(p.levels).get(sel.levelId) ?? 0) + 1.6, c[1]]
     }
