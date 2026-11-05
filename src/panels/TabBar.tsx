@@ -1,5 +1,5 @@
 import { motion } from 'motion/react'
-import { Box, Calculator, FileDown, FileUp, LayoutTemplate, Menu as MenuIcon, PanelRightClose, PanelRightOpen, Plus, X } from 'lucide-react'
+import { Box, Calculator, FileDown, FileUp, LayoutTemplate, Link2, Menu as MenuIcon, PanelRightClose, PanelRightOpen, Plus, X } from 'lucide-react'
 import { lazy, Suspense, useState } from 'react'
 
 const TemplatesDialog = lazy(() => import('./TemplatesDialog').then((m) => ({ default: m.TemplatesDialog })))
@@ -38,6 +38,7 @@ export function TabBar() {
           { separator: true, label: '' },
           { label: 'Render Image', shortcut: 'F12', onSelect: actions.renderImage },
           { label: 'Render Animation', shortcut: '⌃F12', onSelect: actions.renderAnimation },
+          { label: 'Render 360° Panorama', onSelect: () => void actions.renderPanorama() },
           { label: 'Export Selected (.glb)', shortcut: '⌘E', onSelect: actions.exportSelected },
           { label: 'Export Scene (.glb)', onSelect: actions.exportScene },
         ]}
@@ -117,6 +118,9 @@ export function TabBar() {
           <QuantitiesDialog onClose={() => setQuantities(false)} />
         </Suspense>
       )}
+      <button type="button" onClick={() => void import('@/lib/share').then((m) => m.shareLink())} title="Copy a link to this plan: whoever opens it gets their own copy" className="flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs text-dim transition-colors hover:bg-panel-2 hover:text-fg">
+        <Link2 className="size-3.5" /> Share
+      </button>
       <button type="button" onClick={actions.exportPdf} className="flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-fg px-2.5 text-xs font-medium text-app hover:bg-white">
         <FileDown className="size-3.5" /> Export PDF
       </button>

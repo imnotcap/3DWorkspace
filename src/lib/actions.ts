@@ -3,6 +3,9 @@ import { activeProject, useWorkspace, type ShadingMode, type Transform, type Vec
 import { download, viewport } from '@/viewport/bridge'
 import { newPrimitive, restingHeight } from './primitives'
 import { autoTour } from '@/plan/tour'
+import { analyse, pointInPolygon } from '@/plan/geometry'
+import { levelElevations } from '@/plan/levels'
+import type { Vec2 } from '@/plan/types'
 import { uid } from '@/store/workspace'
 import { copySelection, cutSelection, duplicateSelection, pasteClipboard, selectAll } from './clipboard'
 
@@ -211,6 +214,66 @@ export const actions = {
     try {
       const out = await viewport.renderVideo((done, total) => ws().setRenderJob({ kind: 'video', done, total, message: `Frame ${done} / ${total}` }), renderAbort.signal)
       if (out) download(out.blob, `${fileBase()}_${w}x${h}${out.extension}`)
+    } catch (e) {
+      fail(e)
+    } finally {
+      renderAbort = null
+      ws().setRenderJob(null)
+    }
+  },
+
+  /**
+   * A 360° panorama (equirectangular JPEG, tagged for 360° viewers). From the middle of `room` (a
+   * point inside it) or of the room selected on the plan, at eye height; otherwise from where the
+   * render camera (or the walkthrough) stands.
+   */
+  async renderPanorama(room?: { at: Vec2; levelId: string }) {
+    const s = ws()
+    if (s.renderJob) return
+    s.setPlaying(false)
+    const p = project()
+    const sel = room ?? (s.planSel?.kind === 'room' && s.planSel.at ? { at: s.planSel.at, levelId: p.activeLevelId } : null)
+    const pose = viewport.renderPose()
+    // Camera position from the orbit pose (three's spherical: polar from +y, azimuth from +z).
+    const cam = pose && [pose.target[0] + pose.radius * Math.sin(pose.polar) * Math.sin(pose.azimuth), pose.target[1] + pose.radius * Math.cos(pose.polar), pose.target[2] + pose.radius * Math.sin(pose.polar) * Math.cos(pose.azimuth)]
+    const heading = pose ? Math.atan2(-Math.sin(pose.azimuth), -Math.cos(pose.azimuth)) : 0
+    let eye: [number, number, number] | null = cam ? [cam[0], cam[1], cam[2]] : null
+    if (sel) {
+      const face = analyse(p.walls.filter((w) => w.levelId === sel.levelId)).faces.find((f) => pointInPolygon(sel.at, f.polygon))
+      let c = face?.center ?? sel.at
+      // Stand clear of the furniture (and from under a lamp): the free spot nearest the middle.
+      if (face) {
+        const { footprint } = await import('@/plan/footprint')
+        const first = p.levels[0].id
+        const fps = p.objects.filter((o) => !o.parentId && o.visible !== false && (o.levelId ?? first) === sel.levelId && !/rug|paving|decking|socket|switch/.test(o.furniture?.item ?? '')).map((o) => footprint(o))
+        const clear = (q: Vec2) => {
+          if (!pointInPolygon(q, face.inner)) return false
+          for (const f of fps) {
+            const dx = q[0] - f.c[0]
+            const dz = q[1] - f.c[1]
+            const lx = Math.abs(dx * Math.cos(f.yaw) - dz * Math.sin(f.yaw)) - f.w / 2
+            const lz = Math.abs(dx * Math.sin(f.yaw) + dz * Math.cos(f.yaw)) - f.d / 2
+            if (Math.hypot(Math.max(0, lx), Math.max(0, lz)) < 0.45) return false
+          }
+          return true
+        }
+        const spots: Vec2[] = []
+        for (let r = 0; r <= 3; r += 0.15) for (let a = 0; a < 16; a++) spots.push([c[0] + r * Math.cos((a * Math.PI) / 8), c[1] + r * Math.sin((a * Math.PI) / 8)])
+        c = spots.find(clear) ?? c
+      }
+      eye = [c[0], (levelElevations(p.levels).get(sel.levelId) ?? 0) + 1.6, c[1]]
+    }
+    if (!eye) return
+    const width = 4096
+    const size = 1536
+    renderAbort = new AbortController()
+    s.setRenderJob({ kind: 'image', done: 0, total: 6, message: '360° panorama' })
+    try {
+      const blob = await viewport.renderPanorama({ eye, heading, size, width, signal: renderAbort.signal, onFace: (done, total) => ws().setRenderJob({ kind: 'image', done, total, message: `360° panorama · view ${Math.min(total, Math.floor(done) + 1)} / ${total}` }) })
+      if (blob) {
+        download(blob, `${fileBase()}_360.jpg`)
+        ws().setJob({ status: 'done', message: '360° panorama saved: upload it to Facebook, Google Photos, Kuula or Momento360 to look around in it.' })
+      }
     } catch (e) {
       fail(e)
     } finally {

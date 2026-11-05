@@ -11,6 +11,7 @@ import { getEngine } from './Renderer'
 import { daylight } from './sky'
 import { applyDoors, doorsAtFrame, doorsKey } from './doors'
 import { INTERIOR_ENV } from './interior'
+import { CUBE_FACES, equirect, tagPanorama, viewRotation, type CubeView } from './panorama'
 
 const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()))
 const yieldToUi = () => new Promise<void>((r) => setTimeout(r, 0))
@@ -89,7 +90,7 @@ export interface ShotOptions {
 }
 
 /** Offline draw: put the scene at `frame`, then render it through the final pipeline. */
-type Draw = (pose: CameraPose, frame: number, o?: { samples?: number; rebuild?: boolean; onSample?: (n: number) => void; signal?: AbortSignal; doors?: boolean }) => Promise<void>
+type Draw = (pose: CameraPose, frame: number, o?: { samples?: number; rebuild?: boolean; onSample?: (n: number) => void; signal?: AbortSignal; doors?: boolean; aim?: (cam: PerspectiveCamera) => void }) => Promise<void>
 
 /**
  * Offline renderer: resizes the drawing buffer to the output resolution, draws each
@@ -169,6 +170,7 @@ export function RenderBridge() {
           applyDoors(scene, (id) => m.get(id) ?? 0)
         }
         applyPose(cam, pose, w / h)
+        o.aim?.(cam)
         const rebuild = first || !!o.rebuild
         first = false
         if (engine) await engine.final(scene, cam, { pathtrace, samples: o.samples ?? opts.samples ?? useWorkspace.getState().settings.samples, rebuild, onSample: o.onSample, signal: o.signal })
@@ -229,6 +231,41 @@ export function RenderBridge() {
         })
         // toBlob snapshots the drawing buffer synchronously, before it's cleared.
         return new Promise<Blob | null>((res) => gl.domElement.toBlob(res, 'image/png'))
+      })
+
+    viewport.renderPanorama = ({ eye, heading, size, width, onFace, signal }) =>
+      session({ width: size, height: size, ceilings: true, maxLevel: null }, async (draw) => {
+        const f = useWorkspace.getState().frame
+        const { samples, engine: eng } = useWorkspace.getState().settings
+        const views: CubeView[] = []
+        const grab = new OffscreenCanvas(size, size).getContext('2d', { willReadFrequently: true })!
+        for (const [k, face] of CUBE_FACES.entries()) {
+          if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError')
+          await draw(poseAt(f), f, {
+            samples,
+            signal,
+            onSample: (n) => eng === 'pathtrace' && onFace(k + n / samples, CUBE_FACES.length),
+            aim: (c) => {
+              c.position.set(...eye)
+              c.up.set(...face.up)
+              c.lookAt(eye[0] + face.dir[0], eye[1] + face.dir[1], eye[2] + face.dir[2])
+              c.fov = 90
+              c.aspect = 1
+              c.near = 0.05
+              c.far = 500
+              c.updateProjectionMatrix()
+            },
+          })
+          grab.drawImage(gl.domElement, 0, 0)
+          views.push({ data: grab.getImageData(0, 0, size, size).data, rot: viewRotation(face.dir, face.up) })
+          onFace(k + 1, CUBE_FACES.length)
+          await yieldToUi()
+        }
+        const px = equirect(views, size, width, heading)
+        const out = new OffscreenCanvas(width, width / 2)
+        out.getContext('2d')!.putImageData(new ImageData(px as Uint8ClampedArray<ArrayBuffer>, width, width / 2), 0, 0)
+        const jpeg = new Uint8Array(await (await out.convertToBlob({ type: 'image/jpeg', quality: 0.92 })).arrayBuffer())
+        return new Blob([tagPanorama(jpeg, width, width / 2) as Uint8Array<ArrayBuffer>], { type: 'image/jpeg' })
       })
 
     viewport.renderVideo = (onFrame, signal) =>

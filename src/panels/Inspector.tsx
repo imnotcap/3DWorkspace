@@ -279,6 +279,13 @@ function RoomInspector({ levelId, at }: { levelId: string; at: Vec2 }) {
       </div>
       <TrimSection trim={info?.trim ?? DEFAULT_TRIM} onChange={(trim, first) => update('Wall panels', first, { trim })} />
       <FurnishSection levelId={levelId} face={face.index} info={info} />
+      <div className="space-y-1.5 border-t border-line pt-2">
+        <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">360° view</span>
+        <Button className="w-full" onClick={() => void actions.renderPanorama({ at: face.center, levelId })}>
+          360° panorama of this room
+        </Button>
+        <p className="text-2xs leading-snug text-faint">From the middle of the room at eye height, saved as a 360° photo for Facebook, Google Photos, Kuula or a VR headset.</p>
+      </div>
       <ElectricalSection levelId={levelId} face={face.index} polygon={face.polygon} info={info} />
       <div className="space-y-1.5 border-t border-line pt-2">
         <span className="text-2xs font-medium uppercase tracking-[0.08em] text-faint">Ceiling</span>
