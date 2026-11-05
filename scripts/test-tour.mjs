@@ -13,9 +13,9 @@ try {
   await page.goto(server.resolvedUrls.local[0] + 'tests/fixtures/import.html')
   const res = await page.evaluate(async () => (await import('/tests/fixtures/tourCheck.ts')).run())
   for (const r of res) {
-    const ok = r.backward === 0 && r.sideways === 0 && r.maxYawRate <= 45 && r.maxYawAccel <= 250
+    const ok = r.backward === 0 && r.sideways === 0 && r.maxYawRate <= 45 && r.maxYawAccel <= 250 && r.doors > 0 && r.doorClips === 0 && r.shutPasses === 0
     if (!ok) failed++
-    console.log(`${ok ? '✓' : '✗'} ${r.id}: ${r.points} points, ${r.seconds} s, backward ${r.backward}, sideways ${r.sideways}, max turn ${r.maxYawRate}°/s, max turn change ${r.maxYawAccel}°/s²`)
+    console.log(`${ok ? '✓' : '✗'} ${r.id}: ${r.points} points, ${r.seconds} s, backward ${r.backward}, sideways ${r.sideways}, max turn ${r.maxYawRate}°/s, max turn change ${r.maxYawAccel}°/s², ${r.doors} door passes, camera in a moving leaf's sweep ${r.doorClips}×, through a door not fully open ${r.shutPasses}×`)
   }
 } finally {
   await b.close()

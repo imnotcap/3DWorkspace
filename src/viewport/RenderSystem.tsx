@@ -9,6 +9,7 @@ import { applyPose, evaluate, focalToFov, framePose, frameRect, orbitRadius, pos
 import { tourFrames, tourPath, tourPose } from '@/plan/tour'
 import { getEngine } from './Renderer'
 import { daylight } from './sky'
+import { applyDoors, doorsAtFrame, doorsKey } from './doors'
 import { INTERIOR_ENV } from './interior'
 
 const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()))
@@ -88,7 +89,7 @@ export interface ShotOptions {
 }
 
 /** Offline draw: put the scene at `frame`, then render it through the final pipeline. */
-type Draw = (pose: CameraPose, frame: number, o?: { samples?: number; rebuild?: boolean; onSample?: (n: number) => void; signal?: AbortSignal }) => Promise<void>
+type Draw = (pose: CameraPose, frame: number, o?: { samples?: number; rebuild?: boolean; onSample?: (n: number) => void; signal?: AbortSignal; doors?: boolean }) => Promise<void>
 
 /**
  * Offline renderer: resizes the drawing buffer to the output resolution, draws each
@@ -161,6 +162,12 @@ export function RenderBridge() {
       let first = true
       const draw: Draw = async (pose, frame, o = {}) => {
         applyObjectsAt(frame)
+        // Walkthrough frames: doors shut, opening as the camera comes up to them.
+        const proj = activeProject(useWorkspace.getState())
+        if (o.doors && tourActive(proj)) {
+          const m = doorsAtFrame(proj, frame)
+          applyDoors(scene, (id) => m.get(id) ?? 0)
+        }
         applyPose(cam, pose, w / h)
         const rebuild = first || !!o.rebuild
         first = false
@@ -171,6 +178,8 @@ export function RenderBridge() {
         return await fn(draw, w, h)
       } finally {
         applyObjectsAt(useWorkspace.getState().frame)
+        // Doors back as the viewport shows them (the live view sets them again on its next frame).
+        applyDoors(scene, () => null)
         gl.setPixelRatio(prevRatio)
         gl.setSize(prevSize.x, prevSize.y, false)
         scene.background = prevBg
@@ -215,6 +224,7 @@ export function RenderBridge() {
         const { renderWidth: rw, renderHeight: rh, engine: eng } = useWorkspace.getState().settings
         await draw(poseAt(f), f, {
           samples,
+          doors: true,
           onSample: (n) => eng === 'pathtrace' && useWorkspace.getState().setRenderJob({ kind: 'image', done: Math.floor(n), total: samples, message: `${rw}×${rh} · sample ${Math.floor(n)} / ${samples}` }),
         })
         // toBlob snapshots the drawing buffer synchronously, before it's cleared.
@@ -241,12 +251,17 @@ export function RenderBridge() {
         // Moving objects have to be re-baked for the path tracer every frame; a moving camera doesn't.
         const animated = proj.objects.some((o) => o.keys?.length)
         const samples = useWorkspace.getState().settings.videoSamples
+        // Doors opening and closing on the walk: re-baked only on the frames where one moves.
+        let doorKey = ''
         for (let i = 0; i < total; i++) {
           if (signal.aborted) {
             await output.cancel()
             throw new DOMException('Cancelled', 'AbortError')
           }
-          await draw(poseAt(anim.start + i), anim.start + i, { samples, rebuild: animated, signal })
+          const key = tourActive(proj) ? doorsKey(doorsAtFrame(proj, anim.start + i)) : ''
+          const doorsMoved = key !== doorKey
+          doorKey = key
+          await draw(poseAt(anim.start + i), anim.start + i, { samples, rebuild: animated || doorsMoved, signal, doors: true })
           ctx2d.drawImage(gl.domElement, 0, 0)
           await source.add(i / anim.fps, 1 / anim.fps)
           onFrame(i + 1, total)

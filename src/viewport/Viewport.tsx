@@ -30,6 +30,7 @@ import { CameraView, RenderBridge, tourActive } from './RenderSystem'
 import { FinalRender } from './Renderer'
 import { daylight } from './sky'
 import { INTERIOR_ENV } from './interior'
+import { applyDoors, doorsAtFrame, doorsKey } from './doors'
 import { wallSafeTransform } from '@/plan/constrain'
 import { HouseLevel } from './House'
 import { levelElevations } from '@/plan/levels'
@@ -402,6 +403,27 @@ function commitTransform(o: Object3D, tool: keyof typeof TOOL_LABEL) {
   else s.commit(TOOL_LABEL[tool], id, { transform })
 }
 
+/**
+ * Looking through the tour camera: every door shut, each opening as the camera comes up to it.
+ * Otherwise the doors stand as the plan has them.
+ */
+function TourDoors({ walking }: { walking: boolean }) {
+  const project = useActiveProject()
+  const frame = useWorkspace((s) => s.frame)
+  const invalidate = useThree((s) => s.invalidate)
+  const last = useRef('')
+  useFrame(() => {
+    const houses = [...viewport.houses.values()]
+    const m = walking ? doorsAtFrame(project, frame) : null
+    const key = `${houses.map((h) => h.uuid).join()}|${m ? doorsKey(m) : 'plan'}`
+    if (key === last.current) return
+    last.current = key
+    for (const h of houses) applyDoors(h, (id) => (m ? (m.get(id) ?? 0) : null))
+    invalidate()
+  })
+  return null
+}
+
 /** Dark studio while editing; the sky of the time of day when walking through the house. */
 function Background() {
   const project = useActiveProject()
@@ -467,6 +489,7 @@ function SceneContent() {
   return (
     <>
       <StudioEnvironment interior={interior} />
+      <TourDoors walking={walking} />
       <hemisphereLight args={['#ffffff', '#3a3a3a', light.fill]} />
 
       {/* Everything that is part of the picture (the path tracer bakes this; helpers stay out). */}

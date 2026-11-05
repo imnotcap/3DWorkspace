@@ -74,8 +74,9 @@ export const actions = {
     const p = project()
     const { points, doors } = autoTour(p, p.activeLevelId, uid)
     if (points.length < 2) return s.setJob({ status: 'error', message: 'No rooms to tour yet.', hint: 'Close some rooms with walls and connect them with doors first.' })
-    // The doors the walk goes through are opened, so the camera doesn't pass through them.
-    s.editPlan('Auto tour', (pl) => ({ ...pl, tour: { ...pl.tour, points }, openings: pl.openings.map((o) => (doors.includes(o.id) && o.open < 0.9 ? { ...o, open: 1 } : o)) }))
+    // The doors on the way open by themselves as the camera comes up to them (see tourDoorsAt).
+    void doors
+    s.editPlan('Auto tour', (pl) => ({ ...pl, tour: { ...pl.tour, points } }))
     s.setUseTour(true)
     s.setFrame(0)
   },

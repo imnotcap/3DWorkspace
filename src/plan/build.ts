@@ -227,6 +227,15 @@ export function obstaclesOn(g: WallGeom, side: 'left' | 'right', list: LevelBuil
   return out
 }
 
+/** A moving part of a door: a hinged leaf (`swing`: angle when fully open) or a sliding one (`slide`: x closed, travel). */
+export interface DoorPart {
+  id: string
+  swing?: number
+  slide?: [number, number]
+  /** How open the plan has it (0..1). */
+  base: number
+}
+
 /** Daylight coming in through an outside opening: where, facing which way (into the room), how big. */
 export interface WindowPortal {
   c: [number, number, number]
@@ -522,8 +531,10 @@ function buildOpening(o: Opening, g: WallGeom, height: number, interior: 'left' 
       leaf.add(rose, lever, neck)
     }
     pivot.add(leaf)
-    // Opening swings the leaf towards its side.
-    pivot.rotation.y = -dir * leafSide * open * (Math.PI / 2) * 0.95
+    // Opening swings the leaf towards its side. Tagged so the tour can swing it live.
+    const swing = -dir * leafSide * (Math.PI / 2) * 0.95
+    pivot.rotation.y = swing * open
+    pivot.userData.door = { id: o.id, swing, base: open } satisfies DoorPart
     return pivot
   }
 
@@ -540,6 +551,7 @@ function buildOpening(o: Opening, g: WallGeom, height: number, interior: 'left' 
     ] as const) {
       const p = new Group()
       p.position.set(x, 0, (i === 0 ? 1 : -1) * 0.025)
+      if (i === 1) p.userData.door = { id: o.id, slide: [inner / 4, -(inner / 2 - 0.05)], base: open } satisfies DoorPart
       const fw = 0.05
       p.add(box(pw, fw, 0.04, ALU, 0, fw / 2, 0), box(pw, fw, 0.04, ALU, 0, lh - fw / 2, 0), box(fw, lh, 0.04, ALU, -pw / 2 + fw / 2, lh / 2, 0), box(fw, lh, 0.04, ALU, pw / 2 - fw / 2, lh / 2, 0))
       const pane = new Mesh(new BoxGeometry(pw - fw * 2, lh - fw * 2, 0.006), GLASS)
